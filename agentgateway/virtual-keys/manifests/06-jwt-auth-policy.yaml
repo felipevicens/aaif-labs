@@ -1,0 +1,22 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: jwt-auth
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: virtual-keys-demo
+          audiences:
+            - agentgateway
+          jwks:
+            # Inline JWKS is for demos/tests only - use jwks.remote against your
+            # real IdP (Keycloak, Auth0, Okta...) in production.
+            inline: |
+              {"keys":[{"kty":"RSA","n":"mgl2qQxqWWNp40pdi_vofU-62hMXxpL1JLDPE9WGRKpVHvC99gbiKmGK7qa9n1HF4NPk9w9vBpaCRCPFo4yLtxaINvI90aaEkzN-zezhv-p8iuOlutNfp-iVed61R1SuIabHkjH_3W84DLeZ6SR8rUTjug0eYVYMvXtqBJLDfuya-JOsKoNhn6-YprYRj_XKaDXG9uOsvyyvZaQFIDWTNT-tIGSwj5Of8jNDCKBTFAD5mPntt91Ja_oHn8GJIVevRFpKW_jf0kTZbUE8afj3ggkFUqRAmD0lNyNGKDFbAmjazY_lK5aYdzmze5kMogIkyTsXeBcqSFxdz1JBGKuhuw","e":"AQAB","use":"sig","alg":"RS256","kid":"demo-key-1"}]}
