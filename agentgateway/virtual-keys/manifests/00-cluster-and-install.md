@@ -28,6 +28,14 @@ Apply order for the manifests in this folder:
 1. `01-gateway-backend-route.yaml` — Gateway, AgentgatewayBackend, HTTPRoute.
    Substitute your own backend `host`/`port` (or a hosted provider — see the
    [api-keys docs](https://agentgateway.dev/docs/kubernetes/main/llm/api-keys/)).
+   The `agentgateway-proxy` Service is a `LoadBalancer`; on `kind` it stays
+   `EXTERNAL-IP: <pending>` (no LB provider — expected). Reach it with a
+   port-forward, which is what the `curl`s assume:
+
+   ```sh
+   # leave running in its own terminal
+   kubectl port-forward -n agentgateway-system svc/agentgateway-proxy 8080:8080
+   ```
 2. `02-api-keys-secret.yaml` + `03-apikey-auth-policy.yaml` — Scenario 1
    (API key authentication).
 3. `04-ratelimit-namespace.yaml` — Redis + `envoyproxy/ratelimit` + ConfigMap.
