@@ -16,7 +16,10 @@ spec:
           audiences:
             - agentgateway
           jwks:
-            # Inline JWKS is for demos/tests only - use jwks.remote against your
-            # real IdP (Keycloak, Auth0, Okta...) in production.
+            # Reference shape only. The inline key below is a PLACEHOLDER and will
+            # not verify any real token. For a working demo, generate a throwaway
+            # key and apply a policy with the matching JWKS in one step:
+            #   python3 jwt/mint-demo-jwt.py --policy | kubectl apply -f -
+            # In production use jwks.remote against your IdP (Keycloak, Auth0, Okta).
             inline: |
-              {"keys":[{"kty":"RSA","n":"mgl2qQxqWWNp40pdi_vofU-62hMXxpL1JLDPE9WGRKpVHvC99gbiKmGK7qa9n1HF4NPk9w9vBpaCRCPFo4yLtxaINvI90aaEkzN-zezhv-p8iuOlutNfp-iVed61R1SuIabHkjH_3W84DLeZ6SR8rUTjug0eYVYMvXtqBJLDfuya-JOsKoNhn6-YprYRj_XKaDXG9uOsvyyvZaQFIDWTNT-tIGSwj5Of8jNDCKBTFAD5mPntt91Ja_oHn8GJIVevRFpKW_jf0kTZbUE8afj3ggkFUqRAmD0lNyNGKDFbAmjazY_lK5aYdzmze5kMogIkyTsXeBcqSFxdz1JBGKuhuw","e":"AQAB","use":"sig","alg":"RS256","kid":"demo-key-1"}]}
+              {"keys":[{"kty":"RSA","n":"REPLACE_WITH_YOUR_PUBLIC_KEY_MODULUS","e":"AQAB","use":"sig","alg":"RS256","kid":"demo-key-1"}]}

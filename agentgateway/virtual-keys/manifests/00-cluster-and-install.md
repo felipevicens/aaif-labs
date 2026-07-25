@@ -41,8 +41,18 @@ Apply order for the manifests in this folder:
 3. `04-ratelimit-namespace.yaml` — Redis + `envoyproxy/ratelimit` + ConfigMap.
 4. `05-apikey-auth-plus-budget-policy.yaml` — replaces `03-*`, adds
    per-user token budgets (Scenario 2).
-5. `06-jwt-auth-policy.yaml` — Scenario 3, applied standalone or alongside
-   `03-*`/`05-*` to see the AND-composition behavior described in the post.
+5. Scenario 3 (JWT). `06-jwt-auth-policy.yaml` is a reference shape only (its
+   inline JWKS is a placeholder). For a working, verifiable demo, generate a
+   throwaway key and apply the matching policy with the helper, then mint a
+   token from the same key:
+
+   ```sh
+   python3 jwt/mint-demo-jwt.py --policy | kubectl apply -f -   # trusts your demo key
+   export JWT=$(python3 jwt/mint-demo-jwt.py)                   # token signed by it
+   ```
+
+   Apply it standalone or alongside `03-*`/`05-*` to see the AND-composition
+   behavior described in the post. See `jwt/README.md`.
 
 Cleanup:
 
