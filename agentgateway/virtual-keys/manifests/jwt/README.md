@@ -17,6 +17,14 @@ curl -X POST http://localhost:8080/llm -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $JWT" -d "$BODY"
 ```
 
+If the JWT request returns `401 no API Key found`, the `api-key-auth` policy
+from the earlier scenarios is still attached — two auth policies compose as a
+strict **AND**. Detach it to test the JWT alone:
+
+```sh
+kubectl delete agentgatewaypolicy api-key-auth -n agentgateway-system
+```
+
 Other modes: `--jwks` prints just the public JWKS. The token carries
 `iss: virtual-keys-demo`, `aud: agentgateway`, `sub: alice`, and a long expiry.
 
