@@ -1,0 +1,87 @@
+# Helm values for open-telemetry/opentelemetry-collector, metrics-only mode.
+# Discovers agentgateway pods via the same prometheus.io/scrape annotations
+# the docs mention (port 15020, path /metrics), then remote-writes into
+# Prometheus so the token-usage histogram survives as a native histogram.
+# Logs and traces pipelines are explicitly nulled out — that's the Loki/Tempo
+# work left for a future post, not needed here.
+mode: deployment
+image:
+  repository: otel/opentelemetry-collector-contrib
+
+clusterRole:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "nodes", "services", "endpoints"]
+      verbs: ["get", "list", "watch"]
+
+config:
+  receivers:
+    prometheus:
+      config:
+        scrape_configs:
+          - job_name: agentgateway
+            scrape_interval: 15s
+            kubernetes_sd_configs:
+              - role: pod
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                action: keep
+                regex: "true"
+              - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                action: replace
+                target_label: __metrics_path__
+                regex: (.+)
+              - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                action: replace
+                regex: ([^:]+)(?::\d+)?;(\d+)
+                replacement: $$1:$$2
+                target_label: __address__
+              - source_labels: [__meta_kubernetes_namespace]
+                target_label: namespace
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+              # The stock AgentGateway dashboard's $gateway_name/$gateway
+              # variables (and the Requests/LLM/MCP row filters that depend on
+              # them) key off these two labels. Without promoting them from
+              # the pod's own Gateway API labels, those variables resolve to
+              # nothing and every row that filters on $gateway goes blank.
+              - source_labels: [__meta_kubernetes_pod_label_gateway_networking_k8s_io_gateway_name]
+                target_label: gateway_networking_k8s_io_gateway_name
+              - source_labels: [__meta_kubernetes_pod_label_gateway_networking_k8s_io_gateway_class_name]
+                target_label: gateway_networking_k8s_io_gateway_class_name
+  processors:
+    # The Prometheus receiver strips the "_info" suffix from OpenMetrics
+    # "info"-typed metrics (e.g. agentgateway_build_info -> agentgateway_build).
+    # The dashboard's $namespace variable depends on agentgateway_build_info
+    # existing under its original name, so restore the suffix before it's
+    # remote-written. Without this, the namespace/gateway dropdowns resolve
+    # to nothing and every panel silently shows "No data".
+    transform/info-suffix:
+      metric_statements:
+        - context: metric
+          statements:
+            - set(metric.name, Concat([metric.name, "info"], "_")) where metric.metadata["prometheus.type"] == "info"
+  exporters:
+    prometheusremotewrite:
+      endpoint: "http://kube-prometheus-stack-prometheus.telemetry.svc:9090/api/v1/write"
+      resource_to_telemetry_conversion:
+        enabled: true
+    debug:
+      verbosity: basic
+  service:
+    pipelines:
+      metrics:
+        receivers: [prometheus]
+        processors: [transform/info-suffix]
+        exporters: [prometheusremotewrite, debug]
+      logs: null
+      traces: null
+
+ports:
+  metrics:
+    enabled: false
+  otlp:
+    enabled: false
+  otlp-http:
+    enabled: false

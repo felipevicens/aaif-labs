@@ -1,0 +1,27 @@
+# Attaches user_id and team as labels on every Prometheus metric AgentGateway
+# emits, read via CEL from the metadata of whichever virtual key authenticated
+# the request. Same CEL trick post 1 used for per-user rate-limit budgets
+# (apiKey.user_id), just applied to metrics instead of rate limiting.
+#
+# If you use JWTs instead of API keys (post 1, Scenario 3), the same policy
+# shape works by swapping the expressions for jwt.claims.user_id /
+# jwt.claims.team — the JWT's decoded claims are available in CEL the same
+# way apiKey.* is.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: per-user-team-metrics
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+  frontend:
+    metrics:
+      attributes:
+        add:
+          - name: user_id
+            expression: 'apiKey.user_id'
+          - name: team
+            expression: 'apiKey.team'

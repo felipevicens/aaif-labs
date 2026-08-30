@@ -1,0 +1,1078 @@
+{
+  "annotations": {},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 0,
+      "panels": [],
+      "title": "Headline (selected range)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Sum of all tokens (input + output) across the selected time range, honouring the namespace/team/model/API-key filters above.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 5,
+        "x": 0,
+        "y": 1
+      },
+      "id": 9101,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value",
+        "colorMode": "none",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\"}[$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Total Tokens",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Prompt / input tokens over the range (gen_ai_token_type=\"input\").",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3987e5"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 5,
+        "x": 5,
+        "y": 1
+      },
+      "id": 9102,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\", gen_ai_token_type=\"input\"}[$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Input Tokens",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Generated / output tokens over the range (gen_ai_token_type=\"output\") — usually the bigger driver of load on local models.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#d95926"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 5,
+        "x": 10,
+        "y": 1
+      },
+      "id": 9103,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\", gen_ai_token_type=\"output\"}[$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Output Tokens",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Number of LLM requests observed over the range (the _count of the token-usage histogram).",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 5,
+        "x": 15,
+        "y": 1
+      },
+      "id": 9104,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value",
+        "colorMode": "none",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agentgateway_gen_ai_client_token_usage_count{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\"}[$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Total Requests",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Total tokens divided by total requests — how heavy the average call is.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "id": 9105,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value",
+        "colorMode": "none",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\"}[$__range])) / sum(increase(agentgateway_gen_ai_client_token_usage_count{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\"}[$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Avg Tokens / Request",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "id": 0,
+      "panels": [],
+      "title": "Who's burning tokens (ranking)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Teams ranked by total tokens over the selected range. The label comes from the CEL metrics policy (apiKey.team).",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 7
+      },
+      "id": 9110,
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (team) (increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\", team!=\"\"}[$__range])))",
+          "legendFormat": "{{team}}",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Top Teams by tokens",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Individual API keys (user_id) ranked by total tokens. user_id is high-cardinality — this ranking is the right place for it, a drill-down rather than a top-level series.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 7
+      },
+      "id": 9111,
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (user_id) (increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\", user_id!=\"\"}[$__range])))",
+          "legendFormat": "{{user_id}}",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Top API Keys by tokens",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Models ranked by total tokens over the range.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 7
+      },
+      "id": 9112,
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (gen_ai_request_model) (increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\"}[$__range])))",
+          "legendFormat": "{{gen_ai_request_model}}",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Top Models by tokens",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "The single 'who's burning tokens' view: every (team × API key × model) combination over the selected range, ranked by tokens. Click the Tokens header to re-sort.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Tokens"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 9113,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Tokens",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (team, user_id, gen_ai_request_model) (increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\", team!=\"\"}[$__range]))",
+          "format": "table",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "team": "Team",
+              "user_id": "API Key (user_id)",
+              "gen_ai_request_model": "Model",
+              "Value": "Tokens"
+            }
+          }
+        }
+      ],
+      "title": "Top consumers (team × API key × model)",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "id": 0,
+      "panels": [],
+      "title": "Consumption over time (trend)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Stacked bars over Grafana's per-column interval, so bar height is real tokens in that bucket (not a rate). Same colour per team across every panel.",
+      "interval": "5s",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "lineWidth": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "platform"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "data-science"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "id": 9120,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (team) (increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\", team!=\"\"}[$__interval]))",
+          "legendFormat": "{{team}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Tokens over time by Team",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Stacked token buckets split by model and input/output token type.",
+      "interval": "5s",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "lineWidth": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "id": 9121,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (gen_ai_request_model, gen_ai_token_type) (increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\"}[$__interval]))",
+          "legendFormat": "{{gen_ai_request_model}} ({{gen_ai_token_type}})",
+          "refId": "A"
+        }
+      ],
+      "title": "Tokens over time by Model",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Input vs output token split per bucket. Output tokens usually dominate GPU time on local models — watch the ratio.",
+      "interval": "5s",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "lineWidth": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "input"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "output"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "id": 9122,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (gen_ai_token_type) (increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\"}[$__interval]))",
+          "legendFormat": "{{gen_ai_token_type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Input vs Output tokens over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Total tokens per bucket as a single trend line — the aggregate shape behind the stacked breakdowns.",
+      "interval": "5s",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3987e5"
+          },
+          "custom": {
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "drawStyle": "line",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "id": 9123,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\"}[$__interval]))",
+          "legendFormat": "total tokens",
+          "refId": "A"
+        }
+      ],
+      "title": "Total tokens trend",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "One accumulated bar per API key (user_id), split into input and output tokens over the selected range. Bar length = total tokens for that key; the blue/orange split shows how much was prompt vs generated.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "axisPlacement": "auto",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "input"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "output"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Total"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "viz": true,
+                  "legend": true,
+                  "tooltip": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "id": 9106,
+      "options": {
+        "orientation": "horizontal",
+        "xField": "API Key",
+        "stacking": "normal",
+        "showValue": "auto",
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (user_id) (increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\", user_id!=\"\", gen_ai_token_type=\"input\"}[$__range]))",
+          "format": "table",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "input",
+          "legendFormat": "input"
+        },
+        {
+          "expr": "sum by (user_id) (increase(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\", team=~\"${team:pipe}\", user_id=~\"${user_id:pipe}\", gen_ai_request_model=~\"${model:pipe}\", user_id!=\"\", gen_ai_token_type=\"output\"}[$__range]))",
+          "format": "table",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "output",
+          "legendFormat": "output"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "user_id",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time #input": true,
+              "Time #output": true
+            },
+            "renameByName": {
+              "user_id": "API Key",
+              "Value #input": "input",
+              "Value #output": "output",
+              "Value input": "input",
+              "Value output": "output"
+            }
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "reduceRow",
+            "reduce": {
+              "reducer": "sum"
+            },
+            "alias": "Total"
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Total",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "title": "Tokens by API Key — input vs output (stacked)",
+      "type": "barchart"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 36,
+  "style": "dark",
+  "templating": {
+    "list": [
+      {
+        "auto": false,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "datasource",
+        "query": "prometheus",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "auto": false,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "label": "Namespace",
+        "multi": true,
+        "name": "namespace",
+        "query": "label_values(agentgateway_gen_ai_client_token_usage_sum,namespace)",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "allValue": ".*"
+      },
+      {
+        "auto": false,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "label": "Team",
+        "multi": true,
+        "name": "team",
+        "query": "label_values(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\"},team)",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "allValue": ".*"
+      },
+      {
+        "auto": false,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "label": "Model",
+        "multi": true,
+        "name": "model",
+        "query": "label_values(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\"},gen_ai_request_model)",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "allValue": ".*"
+      },
+      {
+        "auto": false,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "label": "API Key (user_id)",
+        "multi": true,
+        "name": "user_id",
+        "query": "label_values(agentgateway_gen_ai_client_token_usage_sum{namespace=~\"${namespace:pipe}\"},user_id)",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "allValue": ".*"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Agentgateway — Team Token Usage",
+  "uid": "agentgateway-token-usage"
+}

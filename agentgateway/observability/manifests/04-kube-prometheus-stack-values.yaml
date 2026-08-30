@@ -1,0 +1,20 @@
+# Helm values for prometheus-community/kube-prometheus-stack (installed in the
+# "telemetry" namespace). Two settings matter for this post:
+#   - enableRemoteWriteReceiver: lets the OTel Collector push samples in,
+#     instead of Prometheus having to scrape every target itself.
+#   - native-histograms: keeps the token-usage histogram a true histogram
+#     across pushes, instead of flattening it into classic bucket series.
+prometheus:
+  prometheusSpec:
+    enableRemoteWriteReceiver: true
+    enableFeatures:
+      - native-histograms
+    retention: 6h
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+grafana:
+  adminPassword: admin
+  service:
+    type: ClusterIP
