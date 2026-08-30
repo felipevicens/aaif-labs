@@ -496,7 +496,7 @@
         "uid": "$datasource"
       },
       "description": "Stacked bars over Grafana's per-column interval, so bar height is real tokens in that bucket (not a rate). Same colour per team across every panel.",
-      "interval": "5s",
+      "interval": "30s",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -591,7 +591,7 @@
         "uid": "$datasource"
       },
       "description": "Stacked token buckets split by model and input/output token type.",
-      "interval": "5s",
+      "interval": "30s",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -655,7 +655,7 @@
         "uid": "$datasource"
       },
       "description": "Input vs output token split per bucket. Output tokens usually dominate GPU time on local models — watch the ratio.",
-      "interval": "5s",
+      "interval": "30s",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -750,7 +750,7 @@
         "uid": "$datasource"
       },
       "description": "Total tokens per bucket as a single trend line — the aggregate shape behind the stacked breakdowns.",
-      "interval": "5s",
+      "interval": "30s",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
