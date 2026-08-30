@@ -37,8 +37,12 @@ BODY="{\"model\":\"$LLM_MODEL\",\"max_tokens\":20,\"stream\":true,\"messages\":[
 call() {
   local name="$1" key="$2"
   local code
-  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GATEWAY_URL" \
-    -H 'Content-Type: application/json' -H "Authorization: Bearer $key" -d "$BODY")
+  if ! code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$GATEWAY_URL" \
+        -H 'Content-Type: application/json' -H "Authorization: Bearer $key" -d "$BODY"); then
+    echo "Could not reach $GATEWAY_URL (see curl error above)." >&2
+    echo "Is the gateway port-forwarded? kubectl port-forward -n agentgateway-system svc/agentgateway-proxy 8080:8080" >&2
+    exit 1
+  fi
   echo "  $name -> HTTP $code"
 }
 
