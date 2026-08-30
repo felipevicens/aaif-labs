@@ -6,6 +6,11 @@
 # data to screenshot instead of a single flat spike. Default ratio
 # (alice:bob:carol = 2:1:1) matches the numbers already quoted in the post.
 #
+# Requests are streamed (stream: true): Time To First Token and Tokens Per
+# Second on the operational dashboard are only emitted for streaming calls
+# (see "Gotchas worth remembering" in the post), so non-streaming traffic
+# leaves those two panels empty.
+#
 # Requires: the gateway port-forwarded to localhost:8080 (Setup section),
 # and alice/bob/carol's keys + team labels already applied (Scenario 3).
 #
@@ -27,7 +32,7 @@ CAROL_CALLS="${CAROL_CALLS:-2}"
 ROUNDS="${ROUNDS:-1}"
 SLEEP="${SLEEP:-5}"
 
-BODY="{\"model\":\"$LLM_MODEL\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"Say OK\"}]}"
+BODY="{\"model\":\"$LLM_MODEL\",\"max_tokens\":20,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"Say OK\"}]}"
 
 call() {
   local name="$1" key="$2"
