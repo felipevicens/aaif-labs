@@ -1,0 +1,96 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# `spec.a2a` is one of AgentgatewayBackend's six mutually-exclusive backend
+# types (`ai | static | dynamicForwardProxy | mcp | aws | a2a`): a single
+# `{host, port}` pair, not a `targets` list like `mcp`. Unlike `ai`/`mcp`,
+# the CRD has no admission rule requiring a matching `AgentgatewayPolicy`
+# type — an `a2a` backend works standalone, with zero A2A-specific policy
+# fields anywhere in the API.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: agent-a
+  namespace: agentgateway-system
+spec:
+  a2a:
+    host: agent-a.a2a-handshake.svc.cluster.local
+    port: 9999
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: agent-b
+  namespace: agentgateway-system
+spec:
+  a2a:
+    host: agent-b.a2a-handshake.svc.cluster.local
+    port: 9999
+---
+# URLRewrite strips the route prefix before the request reaches the agent.
+# The real a2a-sdk server only serves its two fixed paths at its own root
+# (`/.well-known/agent-card.json` and `/` for JSON-RPC) — without this
+# filter, a request to `/a2a/agent-a/.well-known/agent-card.json` would be
+# forwarded to the backend at that same literal path, where nothing is
+# listening.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agent-a
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /a2a/agent-a
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: agent-a
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agent-b
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /a2a/agent-b
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: agent-b
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

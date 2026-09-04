@@ -1,0 +1,158 @@
+# "Hello World Agent" — a near-verbatim port of the official
+# a2a-samples/samples/python/agents/helloworld sample onto the real
+# a2a-sdk (PyPI `a2a-sdk`, confirmed pinned to 1.1.2 here), collapsed into
+# one file for the ConfigMap. Speaks A2A protocol v1.0 only (this SDK
+# version's handler doesn't implement the v0.3 response shape — see the
+# post's Gotchas for what happens if a client doesn't send
+# `A2A-Version: 1.0`).
+#
+# `supportedInterfaces[].url` in its own agent card points at its
+# in-cluster Service DNS name, unreachable from outside the cluster. This
+# is deliberate: it's the value agentgateway's `/.well-known/agent-card.json`
+# rewrite (confirmed in `crates/agentgateway/src/a2a/mod.rs`) is supposed to
+# replace with a gateway-reachable URL before the response leaves the
+# cluster. Scenario 1 in this lab is watching that rewrite happen.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: a2a-handshake
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-a-script
+  namespace: a2a-handshake
+data:
+  main.py: |
+    import uvicorn
+
+    from a2a.helpers import (
+        get_message_text,
+        new_task_from_user_message,
+        new_text_message,
+        new_text_part,
+    )
+    from a2a.server.agent_execution import AgentExecutor, RequestContext
+    from a2a.server.events import EventQueue
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
+    from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
+    from a2a.types import (
+        AgentCapabilities,
+        AgentCard,
+        AgentInterface,
+        AgentSkill,
+        TaskState,
+    )
+    from starlette.applications import Starlette
+
+
+    class HelloWorldAgentExecutor(AgentExecutor):
+        async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+            task = context.current_task
+            if not task:
+                task = new_task_from_user_message(context.message)
+                await event_queue.enqueue_event(task)
+
+            updater = TaskUpdater(
+                event_queue=event_queue, task_id=task.id, context_id=task.context_id
+            )
+            await updater.update_status(
+                state=TaskState.TASK_STATE_WORKING,
+                message=new_text_message('Processing request...'),
+            )
+
+            query = get_message_text(context.message) or ''
+            result = f'Hello, World! I have received your request ({query})'
+            await updater.add_artifact(
+                parts=[new_text_part(text=result, media_type='text/plain')]
+            )
+            await updater.update_status(
+                state=TaskState.TASK_STATE_COMPLETED,
+                message=new_text_message('Request is completed!'),
+            )
+
+        async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+            raise NotImplementedError('Cancel is not supported.')
+
+
+    if __name__ == '__main__':
+        skill = AgentSkill(
+            id='echo_bot',
+            name='Echo Bot',
+            description='An example agent that acknowledges client request and responds with a Hello World message.',
+            input_modes=['text/plain'],
+            output_modes=['text/plain'],
+            tags=['a2a', 'echo-example'],
+            examples=['hi', 'how are you'],
+        )
+        card = AgentCard(
+            name='Hello World Agent',
+            description='Just a hello world agent',
+            version='0.0.1',
+            default_input_modes=['text/plain'],
+            default_output_modes=['text/plain'],
+            capabilities=AgentCapabilities(streaming=True, extended_agent_card=False),
+            supported_interfaces=[
+                AgentInterface(
+                    protocol_binding='JSONRPC',
+                    url='http://agent-a.a2a-handshake.svc.cluster.local:9999',
+                    protocol_version='1.0',
+                )
+            ],
+            skills=[skill],
+        )
+        handler = DefaultRequestHandler(
+            agent_executor=HelloWorldAgentExecutor(),
+            task_store=InMemoryTaskStore(),
+            agent_card=card,
+        )
+        routes = []
+        routes.extend(create_agent_card_routes(card))
+        routes.extend(create_jsonrpc_routes(handler, '/'))
+        app = Starlette(routes=routes)
+        uvicorn.run(app, host='0.0.0.0', port=9999)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-a
+  namespace: a2a-handshake
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-a
+  template:
+    metadata:
+      labels:
+        app: agent-a
+    spec:
+      containers:
+        - name: agent-a
+          image: python:3.12-slim
+          command:
+            - sh
+            - -c
+            - pip install --quiet a2a-sdk==1.1.2 uvicorn starlette sse_starlette && python3 /app/main.py
+          ports:
+            - containerPort: 9999
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: agent-a-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-a
+  namespace: a2a-handshake
+spec:
+  selector:
+    app: agent-a
+  ports:
+    - port: 9999
+      targetPort: 9999

@@ -1,0 +1,146 @@
+# "Loud Agent" — same shape as agent-a, deliberately different output
+# (uppercased) and a different skill/card identity, so Scenario 1's
+# routing test (same gateway, two paths, two distinct agents) has an
+# answer that's obviously wrong if the gateway ever routes to the other
+# backend by mistake. This is the agent the rate-limit policy in
+# 04-rate-limit-policy.yaml gets stacked on; agent-a is left alone as
+# a control.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-b-script
+  namespace: a2a-handshake
+data:
+  main.py: |
+    import uvicorn
+
+    from a2a.helpers import (
+        get_message_text,
+        new_task_from_user_message,
+        new_text_message,
+        new_text_part,
+    )
+    from a2a.server.agent_execution import AgentExecutor, RequestContext
+    from a2a.server.events import EventQueue
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
+    from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
+    from a2a.types import (
+        AgentCapabilities,
+        AgentCard,
+        AgentInterface,
+        AgentSkill,
+        TaskState,
+    )
+    from starlette.applications import Starlette
+
+
+    class LoudAgentExecutor(AgentExecutor):
+        async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+            task = context.current_task
+            if not task:
+                task = new_task_from_user_message(context.message)
+                await event_queue.enqueue_event(task)
+
+            updater = TaskUpdater(
+                event_queue=event_queue, task_id=task.id, context_id=task.context_id
+            )
+            await updater.update_status(
+                state=TaskState.TASK_STATE_WORKING,
+                message=new_text_message('PROCESSING REQUEST...'),
+            )
+
+            query = (get_message_text(context.message) or '').upper()
+            result = f'HELLO, WORLD! I HAVE RECEIVED YOUR REQUEST ({query})'
+            await updater.add_artifact(
+                parts=[new_text_part(text=result, media_type='text/plain')]
+            )
+            await updater.update_status(
+                state=TaskState.TASK_STATE_COMPLETED,
+                message=new_text_message('REQUEST IS COMPLETED!'),
+            )
+
+        async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+            raise NotImplementedError('Cancel is not supported.')
+
+
+    if __name__ == '__main__':
+        skill = AgentSkill(
+            id='shout_bot',
+            name='Shout Bot',
+            description='An example agent that acknowledges client request and shouts a Hello World message back.',
+            input_modes=['text/plain'],
+            output_modes=['text/plain'],
+            tags=['a2a', 'echo-example'],
+            examples=['hi', 'how are you'],
+        )
+        card = AgentCard(
+            name='Loud Agent',
+            description='Just a loud agent',
+            version='0.0.1',
+            default_input_modes=['text/plain'],
+            default_output_modes=['text/plain'],
+            capabilities=AgentCapabilities(streaming=True, extended_agent_card=False),
+            supported_interfaces=[
+                AgentInterface(
+                    protocol_binding='JSONRPC',
+                    url='http://agent-b.a2a-handshake.svc.cluster.local:9999',
+                    protocol_version='1.0',
+                )
+            ],
+            skills=[skill],
+        )
+        handler = DefaultRequestHandler(
+            agent_executor=LoudAgentExecutor(),
+            task_store=InMemoryTaskStore(),
+            agent_card=card,
+        )
+        routes = []
+        routes.extend(create_agent_card_routes(card))
+        routes.extend(create_jsonrpc_routes(handler, '/'))
+        app = Starlette(routes=routes)
+        uvicorn.run(app, host='0.0.0.0', port=9999)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-b
+  namespace: a2a-handshake
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-b
+  template:
+    metadata:
+      labels:
+        app: agent-b
+    spec:
+      containers:
+        - name: agent-b
+          image: python:3.12-slim
+          command:
+            - sh
+            - -c
+            - pip install --quiet a2a-sdk==1.1.2 uvicorn starlette sse_starlette && python3 /app/main.py
+          ports:
+            - containerPort: 9999
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: agent-b-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-b
+  namespace: a2a-handshake
+spec:
+  selector:
+    app: agent-b
+  ports:
+    - port: 9999
+      targetPort: 9999

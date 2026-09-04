@@ -1,0 +1,25 @@
+# Generic traffic policies aren't A2A-aware — there's no A2A-specific CEL
+# context (no `a2a.method` or `a2a.task.state` to match on), and
+# `AgentgatewayPolicy` carries zero a2a-specific fields anywhere in the
+# CRD. But a plain `traffic.rateLimit` still applies to an `a2a` backend
+# exactly like it applies to `ai`/`mcp`/`static`, because it targets the
+# HTTPRoute in front of the backend, not the backend's protocol.
+# Stacked on agent-b only — agent-a stays reachable throughout as a
+# control, so a request failing here is visibly the policy, not the
+# agent or the gateway itself misbehaving.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: agent-b-rate-limit
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: agent-b
+  traffic:
+    rateLimit:
+      local:
+        - requests: 3
+          unit: Seconds
+          burst: 2
