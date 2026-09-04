@@ -1,0 +1,25 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: jwt-auth
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: attribution-demo
+          audiences:
+            - agentgateway
+          jwks:
+            # Reference shape only. The inline key below is a PLACEHOLDER and will
+            # not verify any real token. For a working demo, generate a throwaway
+            # key and apply a policy with the matching JWKS in one step:
+            #   python3 jwt/mint-demo-jwt.py --policy | kubectl apply -f -
+            # In production use jwks.remote against your IdP (Keycloak, Auth0, Okta).
+            inline: |
+              {"keys":[{"kty":"RSA","n":"REPLACE_WITH_YOUR_PUBLIC_KEY_MODULUS","e":"AQAB","use":"sig","alg":"RS256","kid":"demo-key-1"}]}
