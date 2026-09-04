@@ -1,0 +1,45 @@
+# The "existing REST API" this whole post is about. swaggerapi/petstore3
+# is the same image agentgateway's own official OpenAPI tutorial uses:
+# public, keyless, a real OpenAPI 3.0 spec self-served at
+# /api/v3/openapi.json. Nothing here is agentgateway-specific; swap this
+# for any REST API with a real spec and 03-openapi-adapter.yaml doesn't
+# change shape, only its `host` and the spec content.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openapi-mcp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: petstore
+  namespace: openapi-mcp
+  labels:
+    app: petstore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: petstore
+  template:
+    metadata:
+      labels:
+        app: petstore
+    spec:
+      containers:
+        - name: petstore
+          image: swaggerapi/petstore3:unstable
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: petstore
+  namespace: openapi-mcp
+spec:
+  selector:
+    app: petstore
+  ports:
+    - port: 8080
+      targetPort: 8080

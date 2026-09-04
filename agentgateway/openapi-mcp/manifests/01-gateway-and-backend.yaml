@@ -1,0 +1,53 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# Federates the OpenAPI adapter (03-openapi-adapter.yaml) exactly like D1
+# federated five hand-written MCP servers: a `static.host` target, a plain
+# DNS string, no ReferenceGrant needed to reach the openapi-mcp namespace
+# from here. As far as this AgentgatewayBackend is concerned, the adapter
+# is just another MCP server. It has no idea the adapter's tools are
+# generated from a REST API instead of hand-written.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: openapi-tools
+  namespace: agentgateway-system
+spec:
+  mcp:
+    targets:
+      - name: petstore
+        static:
+          host: openapi-adapter.openapi-mcp.svc.cluster.local
+          port: 3000
+          protocol: StreamableHTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: openapi-tools
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      backendRefs:
+        - name: openapi-tools
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
