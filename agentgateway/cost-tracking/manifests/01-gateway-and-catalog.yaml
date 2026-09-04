@@ -1,0 +1,280 @@
+# Gateway wired to a Gateway-scoped AgentgatewayParameters carrying the
+# model cost catalog (a ConfigMap of real, published per-token prices),
+# plus one mock backend that echoes back whatever model the caller asked
+# for and always reports the same literal token usage. Fixed, known token
+# counts are what make the resulting dollar figures checkable by hand
+# instead of taken on faith.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  infrastructure:
+    parametersRef:
+      name: cost-catalog
+      group: agentgateway.dev
+      kind: AgentgatewayParameters
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# modelCatalog is only honored on a Gateway-level AgentgatewayParameters,
+# never on a GatewayClass-level one (docs are explicit about this).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: cost-catalog
+  namespace: agentgateway-system
+spec:
+  modelCatalog:
+    sources:
+      - configMap:
+          name: model-cost-catalog
+          key: catalog.json
+---
+# Real, published per-token prices (USD per 1,000,000 tokens), not
+# invented numbers: OpenAI's own list prices for gpt-4o-mini and gpt-4o
+# as of this writing. shadow-model-v1 is deliberately left out of the
+# catalog to test what happens to llm.cost for a model agentgateway has
+# never priced.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-cost-catalog
+  namespace: agentgateway-system
+data:
+  catalog.json: |
+    {
+      "providers": {
+        "openai": {
+          "models": {
+            "gpt-4o-mini": {
+              "rates": { "input": "0.15", "output": "0.60" }
+            },
+            "gpt-4o": {
+              "rates": { "input": "2.50", "output": "10.00" }
+            }
+          }
+        }
+      }
+    }
+---
+# Always reports 1000 prompt tokens and 500 completion tokens, whatever
+# model was actually asked for, and echoes that model name back in the
+# response body. Same 1000/500 split for every route in this lab so the
+# only thing that changes between requests is which catalog price applies.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cost-mock-backend-script
+  namespace: default
+data:
+  server.py: |
+    import json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length)
+            try:
+                payload = json.loads(raw or b'{}')
+            except json.JSONDecodeError:
+                payload = {}
+            model = payload.get('model', 'unknown')
+            body = {
+                "model": model,
+                "usage": {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500},
+                "choices": [{
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "ok"},
+                }],
+                "id": "chatcmpl-costmock0000000000001",
+                "object": "chat.completion",
+                "created": 1788500000,
+            }
+            out = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, fmt, *args):
+            pass
+
+    HTTPServer(('0.0.0.0', 8080), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cost-mock-backend
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cost-mock-backend
+  template:
+    metadata:
+      labels:
+        app: cost-mock-backend
+    spec:
+      containers:
+        - name: cost-mock-backend
+          image: python:3.12-alpine
+          command: ["python3", "/app/server.py"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: cost-mock-backend-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cost-mock-backend
+  namespace: default
+spec:
+  selector:
+    app: cost-mock-backend
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+# Priced in the catalog: $0.15 / $0.60 per 1M input/output tokens.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: cheap-model
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4o-mini
+      host: cost-mock-backend.default.svc.cluster.local
+      port: 8080
+      path: "/v1/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cheap-model
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/cheap-model
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: cheap-model
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+# Priced in the catalog: $2.50 / $10.00 per 1M input/output tokens. Same
+# 1000/500 token split as cheap-model, so the dollar gap between the two
+# routes' access-log entries comes only from the catalog rate.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: pricey-model
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4o
+      host: cost-mock-backend.default.svc.cluster.local
+      port: 8080
+      path: "/v1/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: pricey-model
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/pricey-model
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: pricey-model
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+# Deliberately absent from catalog.json above, to see what llm.cost does
+# for a model agentgateway has never priced.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: unpriced-model
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: shadow-model-v1
+      host: cost-mock-backend.default.svc.cluster.local
+      port: 8080
+      path: "/v1/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: unpriced-model
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/unpriced-model
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: unpriced-model
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
