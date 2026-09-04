@@ -1,0 +1,30 @@
+# The second, independent layer: CEL-based tool access RBAC via the same
+# AgentgatewayPolicy kind, targeting the same AgentgatewayBackend, but a
+# completely different mechanism than the guardrail above. No JWT
+# involved on purpose: `mcp.tool.name` alone is enough to answer "should
+# this caller ever be allowed to reach this tool", independent of who the
+# caller is (JWT-scoped RBAC is D5's subject, once auth exists in this
+# series).
+#
+# Only `search_docs` is on the allow-list. `export_env_vars` is denied
+# here even though it was already blocked by the guardrail in
+# 04-guardrail-policy.yaml: this is meant to keep working as a backstop
+# if that guardrail is ever removed, misconfigured, or just returns Pass
+# by mistake, not to duplicate it.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: tool-access
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: vulnerable-tools
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+            - 'mcp.tool.name == "search_docs"'

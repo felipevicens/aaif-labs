@@ -1,0 +1,52 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# One target, one tool server, on purpose: this lab is about what
+# happens between the gateway and a single MCP server that ships a
+# poisoned tool description, not about federation. `static.host` is a
+# plain DNS string, so no ReferenceGrant is needed to reach the
+# tool-poisoning namespace from here (same as D1/D3).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: vulnerable-tools
+  namespace: agentgateway-system
+spec:
+  mcp:
+    targets:
+      - name: vulnerable-tools
+        static:
+          host: vulnerable-tool-server.tool-poisoning.svc.cluster.local
+          port: 8000
+          protocol: StreamableHTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vulnerable-tools
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      backendRefs:
+        - name: vulnerable-tools
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

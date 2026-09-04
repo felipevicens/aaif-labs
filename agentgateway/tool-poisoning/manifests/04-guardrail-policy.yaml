@@ -1,0 +1,33 @@
+# Attaches the ext-mcp guardrail to the vulnerable backend for exactly
+# two method/phase pairs: it inspects tools/list on the way back to the
+# client (Response), and tools/call on the way in (Request). Everything
+# else (initialize, ping, resources/*, ...) passes through untouched,
+# since `methods` is an explicit allow-list, not a blanket intercept.
+#
+# failureMode: FailClosed is set explicitly, matching B1's own
+# already-validated default for the AI-side prompt guard: a guardrail
+# that's down should not silently let poisoned tool descriptions or
+# dangerous tool calls through.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: mcp-guardrails
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: vulnerable-tools
+  backend:
+    mcp:
+      guardrails:
+        processors:
+          - remote:
+              backendRef:
+                kind: Service
+                name: ext-mcp-guardrail
+                port: 4445
+              failureMode: FailClosed
+            methods:
+              tools/list: Response
+              tools/call: Request

@@ -1,0 +1,234 @@
+# This lab's own MCP guardrail: a real gRPC server implementing
+# agentgateway's ExtMcp wire protocol (see the vendored .proto below,
+# copied verbatim from agentgateway/agentgateway's
+# crates/protos/proto/ext_mcp.proto at v1.5.0). It gates and mutates MCP
+# method calls, the same shape as B4's HTTP guardrail webhook, but over
+# HTTP/2 cleartext (h2c) protobuf instead of JSON.
+#
+# Two independent checks: CheckResponse sanitizes a poisoned tool
+# description on tools/list before it ever reaches a client; CheckRequest
+# hard-blocks a specific dangerous tool name on tools/call regardless of
+# what its description says. The exact wire format both checks parse
+# (plain MCP result/params JSON, not documented anywhere agentgateway
+# publishes) was reverse-engineered live with a first debug pass that
+# only logged what it received; see PLAN.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ext-mcp-guardrail-proto
+  namespace: agentgateway-system
+data:
+  ext_mcp.proto: |
+    syntax = "proto3";
+
+    package agentgateway.dev.ext_mcp;
+
+    import "google/protobuf/struct.proto";
+
+    option go_package = "github.com/agentgateway/agentgateway/go/api;api";
+
+    service ExtMcp {
+      rpc CheckRequest(McpRequest) returns (McpRequestResult);
+      rpc CheckResponse(McpResponse) returns (McpResponseResult);
+    }
+
+    message McpRequest {
+      repeated string service_names = 1;
+      string method = 2;
+      google.protobuf.Struct metadata_context = 3;
+      optional bytes mcp_request = 4;
+      repeated McpHeader headers = 5;
+    }
+
+    message McpResponse {
+      repeated string service_names = 1;
+      string method = 2;
+      google.protobuf.Struct metadata_context = 3;
+      bytes mcp_response = 4;
+    }
+
+    message McpRequestResult {
+      oneof result {
+        Pass pass = 1;
+        bytes mutated = 2;
+        AuthorizationError error = 3;
+      }
+      HeaderMutation header_mutation = 4;
+      google.protobuf.Struct metadata = 5;
+    }
+
+    message McpResponseResult {
+      oneof result {
+        Pass pass = 1;
+        bytes mutated = 2;
+        AuthorizationError error = 3;
+      }
+    }
+
+    message HeaderMutation {
+      repeated McpHeader set = 1;
+      repeated string remove = 2;
+    }
+
+    message McpHeader {
+      string key = 1;
+      bytes value = 2;
+    }
+
+    message Pass {}
+
+    message AuthorizationError {
+      enum Code {
+        UNKNOWN = 0;
+        PERMISSION_DENIED = 1;
+        RESOURCE_EXHAUSTED = 2;
+        INVALID = 3;
+      }
+      Code code = 1;
+      string reason = 2;
+      optional bytes mcp_error = 3;
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ext-mcp-guardrail-script
+  namespace: agentgateway-system
+data:
+  server.py: |
+    # Real logic, not the debug/logging version this ConfigMap started as.
+    # `mcp_request`/`mcp_response` bytes turned out to be the plain MCP
+    # result/params JSON (confirmed live, see PLAN.md): tools/list Response
+    # carries {"tools": [{"name", "description", ...}, ...]} plus agentgateway's
+    # own resultType/ttlMs/cacheScope wrapper fields; tools/call Request
+    # carries {"name": ..., "arguments": {...}}. Neither is documented
+    # anywhere agentgateway publishes.
+    from concurrent import futures
+    import json
+    import re
+
+    import grpc
+    import ext_mcp_pb2 as pb2
+    import ext_mcp_pb2_grpc as pb2_grpc
+
+    # A tool description is sanitized by truncating it at the first line
+    # that looks like an embedded directive to the agent reading it, not
+    # a description of the tool. Real tool descriptions don't open a line
+    # with an all-caps word and a colon; this is what search_docs's
+    # poisoned description does.
+    INJECTION_MARKER = re.compile(
+        r"^\s*(IMPORTANT|SYSTEM|NOTE TO AGENT|ADMIN OVERRIDE)\s*:", re.MULTILINE
+    )
+    BLOCKED_TOOLS = {"export_env_vars"}
+
+
+    def sanitize_description(description):
+        match = INJECTION_MARKER.search(description)
+        if not match:
+            return description, False
+        return description[: match.start()].rstrip(), True
+
+
+    class ExtMcpServicer(pb2_grpc.ExtMcpServicer):
+        def CheckRequest(self, request, context):
+            if request.method == "tools/call":
+                try:
+                    payload = json.loads(request.mcp_request)
+                except (ValueError, TypeError):
+                    payload = {}
+                name = payload.get("name")
+                if name in BLOCKED_TOOLS:
+                    print(f"BLOCKED tools/call: {name}", flush=True)
+                    return pb2.McpRequestResult(
+                        error=pb2.AuthorizationError(
+                            code=pb2.AuthorizationError.PERMISSION_DENIED,
+                            reason=f"tool '{name}' is blocked by the MCP guardrail",
+                        )
+                    )
+            return pb2.McpRequestResult(**{"pass": pb2.Pass()})
+
+        def CheckResponse(self, request, context):
+            if request.method == "tools/list":
+                payload = json.loads(request.mcp_response)
+                changed = False
+                for tool in payload.get("tools", []):
+                    clean, was_dirty = sanitize_description(tool.get("description", ""))
+                    if was_dirty:
+                        print(f"SANITIZED description for tool: {tool.get('name')}", flush=True)
+                        tool["description"] = clean
+                        changed = True
+                if changed:
+                    return pb2.McpResponseResult(mutated=json.dumps(payload).encode())
+            return pb2.McpResponseResult(**{"pass": pb2.Pass()})
+
+
+    def serve():
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+        pb2_grpc.add_ExtMcpServicer_to_server(ExtMcpServicer(), server)
+        server.add_insecure_port("0.0.0.0:4445")
+        server.start()
+        print("ext-mcp guardrail listening on :4445", flush=True)
+        server.wait_for_termination()
+
+
+    if __name__ == "__main__":
+        serve()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ext-mcp-guardrail
+  namespace: agentgateway-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ext-mcp-guardrail
+  template:
+    metadata:
+      labels:
+        app: ext-mcp-guardrail
+    spec:
+      containers:
+        - name: ext-mcp-guardrail
+          image: python:3.12-slim
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              pip install --quiet grpcio grpcio-tools protobuf
+              mkdir -p /app
+              cp /config/ext_mcp.proto /app/ext_mcp.proto
+              cp /config/server.py /app/server.py
+              cd /app
+              python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. ext_mcp.proto
+              python3 server.py
+          ports:
+            - containerPort: 4445
+          volumeMounts:
+            - name: proto
+              mountPath: /config/ext_mcp.proto
+              subPath: ext_mcp.proto
+            - name: script
+              mountPath: /config/server.py
+              subPath: server.py
+      volumes:
+        - name: proto
+          configMap:
+            name: ext-mcp-guardrail-proto
+        - name: script
+          configMap:
+            name: ext-mcp-guardrail-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ext-mcp-guardrail
+  namespace: agentgateway-system
+spec:
+  selector:
+    app: ext-mcp-guardrail
+  ports:
+    - port: 4445
+      targetPort: 4445
