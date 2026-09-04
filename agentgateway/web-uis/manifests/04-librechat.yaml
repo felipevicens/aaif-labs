@@ -1,0 +1,119 @@
+# LibreChat needs a Mongo backend regardless of which model provider it
+# talks to — unrelated to agentgateway, just how LibreChat is built.
+# JWT_SECRET/JWT_REFRESH_SECRET/CREDS_KEY/CREDS_IV below are throwaway
+# values for this ephemeral lab cluster (LibreChat's own internal session
+# signing, not credentials for any external service) — never reused
+# outside this lab, and unrelated to the "no real API key" rule, which is
+# about provider credentials, not app-internal secrets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: librechat-config
+  namespace: web-uis
+data:
+  librechat.yaml: |
+    version: 1.2.1
+    cache: true
+    endpoints:
+      custom:
+        - name: "agentgateway"
+          apiKey: "placeholder"
+          baseURL: "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/v1"
+          models:
+            default: ["agentgateway-demo-model"]
+            fetch: false
+          titleConvo: false
+          modelDisplayLabel: "agentgateway"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+  namespace: web-uis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:8.0.20
+          ports:
+            - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: web-uis
+spec:
+  selector:
+    app: mongodb
+  ports:
+    - port: 27017
+      targetPort: 27017
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: librechat
+  namespace: web-uis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: librechat
+  template:
+    metadata:
+      labels:
+        app: librechat
+    spec:
+      containers:
+        - name: librechat
+          image: registry.librechat.ai/danny-avila/librechat-dev:latest
+          ports:
+            - containerPort: 3080
+          env:
+            - name: MONGO_URI
+              value: "mongodb://mongodb.web-uis.svc.cluster.local:27017/LibreChat"
+            - name: DOMAIN_CLIENT
+              value: "http://localhost:3080"
+            - name: DOMAIN_SERVER
+              value: "http://localhost:3080"
+            - name: NO_INDEX
+              value: "true"
+            - name: ALLOW_REGISTRATION
+              value: "true"
+            - name: JWT_SECRET
+              value: "web-uis-lab-throwaway-jwt-secret-do-not-reuse"
+            - name: JWT_REFRESH_SECRET
+              value: "web-uis-lab-throwaway-refresh-secret-do-not-reuse"
+            - name: CREDS_KEY
+              value: "2c5f9e1a7b3d4468c0e6a1f2b7d3489e5f0a1c2b3d4e5f60718293a4b5c6d7e"
+            - name: CREDS_IV
+              value: "8f1a2b3c4d5e6f70a1b2c3d4e5f60718"
+          volumeMounts:
+            - name: config
+              mountPath: /app/librechat.yaml
+              subPath: librechat.yaml
+      volumes:
+        - name: config
+          configMap:
+            name: librechat-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: librechat
+  namespace: web-uis
+spec:
+  selector:
+    app: librechat
+  ports:
+    - port: 3080
+      targetPort: 3080

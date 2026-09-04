@@ -1,0 +1,30 @@
+# Held back from the initial apply (see 00-cluster-and-install.md) so
+# Scenario 3 can show the same request succeeding before this policy
+# exists and getting rejected after — applied once, it governs Open
+# WebUI, LibreChat, and kagent identically, since all three share the one
+# HTTPRoute targeted below.
+#
+# Schema reused verbatim from the already-live-validated B-series lab
+# (labs/agentgateway/guardrails-regex/manifests/02-custom-matches-policy.yaml),
+# not re-derived from kagent's own docs example.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: no-email-requests
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: demo-llm
+  backend:
+    ai:
+      promptGuard:
+        request:
+          - regex:
+              matches:
+                - "email"
+              action: Reject
+            response:
+              message: "Request blocked by the shared agentgateway policy: prompts may not mention email."
+              statusCode: 403

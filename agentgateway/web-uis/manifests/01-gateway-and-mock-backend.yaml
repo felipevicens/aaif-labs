@@ -1,0 +1,205 @@
+# The shared backend all three front-ends in this lab point at. One
+# AgentgatewayBackend, one HTTPRoute — this is the whole thesis of the
+# post: three unrelated client apps configured identically (same base
+# URL), governed by whatever policy is attached to this one route.
+#
+# The mock model server returns real OpenAI-shaped chat-completion JSON
+# (choices[].message.content), not a raw echo like A1's httpbun scenario:
+# Open WebUI, LibreChat, and kagent all actually parse the response body,
+# so it has to be a response a real OpenAI SDK would accept. It ignores
+# `tools`/`tool_choice` in the request rather than erroring on them —
+# kagent's own docs say it always sends `tool_choice: auto`, agent or not.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: web-uis
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-llm-script
+  namespace: web-uis
+data:
+  main.py: |
+    import json
+    import time
+    import uuid
+
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse, StreamingResponse
+    from starlette.routing import Route
+
+    MODEL_NAME = "agentgateway-demo-model"
+
+
+    def last_user_text(messages):
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts = [p.get("text", "") for p in content if isinstance(p, dict)]
+                return " ".join(parts)
+        return ""
+
+
+    async def chat_completions(request):
+        body = await request.json()
+        user_text = last_user_text(body.get("messages", []))
+        reply = f"Hello from behind agentgateway! You said: {user_text!r}"
+        completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+        created = int(time.time())
+        model = body.get("model") or MODEL_NAME
+
+        if body.get("stream"):
+            async def event_stream():
+                chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [
+                        {"index": 0, "delta": {"role": "assistant", "content": reply}, "finish_reason": None}
+                    ],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n"
+                done = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                yield f"data: {json.dumps(done)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+        return JSONResponse(
+            {
+                "id": completion_id,
+                "object": "chat.completion",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": reply}, "finish_reason": "stop"}
+                ],
+                "usage": {
+                    "prompt_tokens": len(user_text.split()),
+                    "completion_tokens": len(reply.split()),
+                    "total_tokens": len(user_text.split()) + len(reply.split()),
+                },
+            }
+        )
+
+
+    app = Starlette(routes=[Route("/v1/chat/completions", chat_completions, methods=["POST"])])
+
+    if __name__ == "__main__":
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-llm
+  namespace: web-uis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-llm
+  template:
+    metadata:
+      labels:
+        app: mock-llm
+    spec:
+      containers:
+        - name: mock-llm
+          image: python:3.12-slim
+          command:
+            - sh
+            - -c
+            - pip install --quiet starlette uvicorn && python3 /app/main.py
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: mock-llm-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-llm
+  namespace: web-uis
+spec:
+  selector:
+    app: mock-llm
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+# `host`/`port`/`path` override the same way A1's httpbun scenario does:
+# the "openai" provider type is kept (so the wire shape and the synthesized
+# /v1/models entry stay OpenAI-shaped), but requests actually go to the
+# in-cluster mock instead of api.openai.com.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: demo-llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: agentgateway-demo-model
+      host: mock-llm.web-uis.svc.cluster.local
+      port: 8000
+      path: "/v1/chat/completions"
+---
+# PathPrefix "/" with no URLRewrite, matching agentgateway's own Open
+# WebUI/LibreChat Kubernetes docs: every client here is configured with
+# base URL .../v1 and calls /v1/chat/completions or /v1/models itself, so
+# the client-facing path already matches what the AgentgatewayBackend's
+# own path override expects — no rewrite hop needed, unlike A1's
+# friendly-prefix scenarios.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: demo-llm
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: demo-llm
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

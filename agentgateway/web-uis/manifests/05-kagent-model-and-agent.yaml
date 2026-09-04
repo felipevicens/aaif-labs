@@ -1,0 +1,44 @@
+# Requires kagent already installed (kagent-crds + kagent Helm charts,
+# see 00-cluster-and-install.md — kagent isn't Gateway-API-shaped so it
+# doesn't fit this series' usual flat-YAML pattern).
+#
+# kagent's own docs default to a native Ollama ModelConfig, but kagent
+# also documents a "BYO OpenAI-compatible model" path
+# (ModelConfig.spec.provider: OpenAI + spec.openAI.baseUrl) that speaks
+# the exact same wire protocol Open WebUI and LibreChat use. Using that
+# instead of the Ollama path is what lets all three front-ends in this lab
+# share one AgentgatewayBackend with zero protocol translation.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kagent-agentgateway
+  namespace: kagent
+type: Opaque
+stringData:
+  API_KEY: "placeholder"
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: agentgateway-model
+  namespace: kagent
+spec:
+  provider: OpenAI
+  model: agentgateway-demo-model
+  apiKeySecret: kagent-agentgateway
+  apiKeySecretKey: API_KEY
+  openAI:
+    baseUrl: "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/v1"
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: demo-agent
+  namespace: kagent
+spec:
+  type: Declarative
+  description: "Minimal demo agent for the web-uis lab, no tools."
+  declarative:
+    runtime: go
+    modelConfig: agentgateway-model
+    systemMessage: "You are a minimal demo agent reachable through agentgateway. Reply briefly."

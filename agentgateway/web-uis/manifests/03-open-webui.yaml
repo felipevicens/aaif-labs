@@ -1,0 +1,52 @@
+# Straight port of agentgateway's own Kubernetes doc example for Open
+# WebUI (/docs/kubernetes/latest/integrations/web-uis/open-webui/), with
+# WEBUI_AUTH disabled so the lab's curl-based validation doesn't need a
+# real signup flow (see 00-cluster-and-install.md for why: this series
+# validates via API calls, not browser sessions). OPENAI_API_KEY is a
+# placeholder Open WebUI requires to start but never actually sends
+# anywhere meaningful — agentgateway holds the real routing decision.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui
+  namespace: web-uis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open-webui
+  template:
+    metadata:
+      labels:
+        app: open-webui
+    spec:
+      containers:
+        - name: open-webui
+          image: ghcr.io/open-webui/open-webui:main
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OPENAI_API_BASE_URL
+              value: "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/v1"
+            - name: OPENAI_API_KEY
+              value: "placeholder"
+            - name: WEBUI_AUTH
+              value: "False"
+          volumeMounts:
+            - name: data
+              mountPath: /app/backend/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-webui
+  namespace: web-uis
+spec:
+  selector:
+    app: open-webui
+  ports:
+    - port: 8080
+      targetPort: 8080
