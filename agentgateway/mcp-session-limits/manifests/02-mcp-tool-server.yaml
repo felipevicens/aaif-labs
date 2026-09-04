@@ -1,0 +1,73 @@
+# A single tool, `ping`, that returns a monotonically increasing counter
+# and this process's own PID. Neither session handling nor rate limiting
+# is implemented here; both happen entirely at the gateway, in front of
+# this ordinary MCP server.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-session-limits
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-tool-server-script
+  namespace: mcp-session-limits
+data:
+  server.py: |
+    import os
+    from mcp.server.mcpserver import MCPServer
+
+    mcp = MCPServer("mcp-tool-server")
+    counter = {"n": 0}
+
+    @mcp.tool()
+    def ping() -> str:
+        """Increment and return a call counter, plus this process's PID.
+        Useful for proving how many calls actually reached the backend,
+        and whether they landed on the same server process."""
+        counter["n"] += 1
+        return f"pong #{counter['n']} from pid {os.getpid()}"
+
+    if __name__ == "__main__":
+        mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-tool-server
+  namespace: mcp-session-limits
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-tool-server
+  template:
+    metadata:
+      labels:
+        app: mcp-tool-server
+    spec:
+      containers:
+        - name: mcp-tool-server
+          image: python:3.12-slim
+          command: ["sh", "-c", "pip install --quiet mcp && python3 /app/server.py"]
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: mcp-tool-server-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-tool-server
+  namespace: mcp-session-limits
+spec:
+  selector:
+    app: mcp-tool-server
+  ports:
+    - port: 8000
+      targetPort: 8000

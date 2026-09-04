@@ -1,0 +1,75 @@
+# A Gateway-scoped AgentgatewayParameters carrying a `deployment.spec`
+# overlay (strategic-merge-patch on the generated Deployment), starting at
+# 1 replica. Scenario C bumps `replicas` to 2 to make local rate
+# limiting's "per replica, not global" behavior directly observable.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  infrastructure:
+    parametersRef:
+      name: gateway-scaling
+      group: agentgateway.dev
+      kind: AgentgatewayParameters
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: gateway-scaling
+  namespace: agentgateway-system
+spec:
+  deployment:
+    spec:
+      replicas: 1
+---
+# sessionRouting: Stateful (the default; spelled out here rather than
+# left implicit, since this whole post is about what that default does)
+# with a single static target, on purpose: a single-pod backend can't
+# show the docs' own "requests aren't guaranteed to hit the same
+# instance" static-target failure mode, since there's only ever one
+# instance to reconnect to. That failure mode needs a multi-replica
+# backend behind a selector target, out of scope for this lab; see the
+# post's Gotchas section.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: mcp-server
+  namespace: agentgateway-system
+spec:
+  mcp:
+    sessionRouting: Stateful
+    targets:
+      - name: mcp-server
+        static:
+          host: mcp-tool-server.mcp-session-limits.svc.cluster.local
+          port: 8000
+          protocol: StreamableHTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp-server
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      backendRefs:
+        - name: mcp-server
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

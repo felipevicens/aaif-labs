@@ -1,0 +1,27 @@
+# Two entries, deliberately at two different time scales, to make
+# multi-entry enforcement (fixed in agentgateway 1.5, per the docs'
+# own changelog note; before that only the first entry was honored)
+# directly observable: a loose burst allowance that refills in a couple
+# of seconds, and a tight per-minute ceiling that does not. The Seconds
+# entry alone would let this lab quietly pass even on a build where only
+# entry #1 is enforced; the Minutes entry is what actually proves #2 is
+# too.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: mcp-rate-limit
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: mcp-server
+  traffic:
+    rateLimit:
+      local:
+        - requests: 3
+          unit: Seconds
+          burst: 2
+        - requests: 6
+          unit: Minutes
+          burst: 0
