@@ -1,0 +1,144 @@
+# Same envoyproxy/ratelimit + Redis pair the virtual-keys lab already
+# validated, keyless, reused as-is. The new part is the nested config: a
+# team_id-only entry carries its own shared rate_limit, and each team_id
+# entry nests a user_id sub-entry with its own separate rate_limit. One
+# HTTP request sends both an 1-tuple (team_id) and a 2-tuple
+# (team_id+user_id) descriptor, so both counters are checked independently
+# on every call.
+#
+# platform team pool: 4/minute, shared by alice + carol.
+#   alice's own sub-limit: 2/minute (tight, trips before the team pool does).
+#   carol's own sub-limit: 5/minute (loose, so her calls are what exhausts
+#   the shared team pool without ever tripping her own cap).
+# research team pool: 2/minute, only bob, both limits line up so his calls
+#   never disagree about which one blocked him.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ratelimit
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: ratelimit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: ratelimit
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ratelimit-config
+  namespace: ratelimit
+data:
+  config.yaml: |
+    domain: agentgateway
+    descriptors:
+      - key: team_id
+        value: platform
+        rate_limit:
+          unit: minute
+          requests_per_unit: 4
+        descriptors:
+          - key: user_id
+            value: alice
+            rate_limit:
+              unit: minute
+              requests_per_unit: 2
+          - key: user_id
+            value: carol
+            rate_limit:
+              unit: minute
+              requests_per_unit: 5
+      - key: team_id
+        value: research
+        rate_limit:
+          unit: minute
+          requests_per_unit: 2
+        descriptors:
+          - key: user_id
+            value: bob
+            rate_limit:
+              unit: minute
+              requests_per_unit: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ratelimit
+  namespace: ratelimit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ratelimit
+  template:
+    metadata:
+      labels:
+        app: ratelimit
+    spec:
+      containers:
+        - name: ratelimit
+          image: envoyproxy/ratelimit:master
+          command: ["/bin/ratelimit"]
+          env:
+            - name: REDIS_SOCKET_TYPE
+              value: tcp
+            - name: REDIS_URL
+              value: redis:6379
+            - name: RUNTIME_ROOT
+              value: /data
+            - name: RUNTIME_SUBDIRECTORY
+              value: ratelimit
+            - name: RUNTIME_WATCH_ROOT
+              value: "false"
+            - name: USE_STATSD
+              value: "false"
+          ports:
+            - containerPort: 8081
+              name: grpc
+          volumeMounts:
+            - name: config
+              mountPath: /data/ratelimit/config/config.yaml
+              subPath: config.yaml
+      volumes:
+        - name: config
+          configMap:
+            name: ratelimit-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ratelimit
+  namespace: ratelimit
+spec:
+  selector:
+    app: ratelimit
+  ports:
+    - name: grpc
+      port: 8081
+      targetPort: 8081
