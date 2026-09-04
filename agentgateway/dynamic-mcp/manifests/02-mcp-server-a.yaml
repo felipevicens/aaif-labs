@@ -1,0 +1,81 @@
+# The one MCP server that exists when the cluster first comes up. It
+# speaks Streamable HTTP (required for selector-based targets, see
+# 01-gateway-and-backend.yaml) via the official Python `mcp` SDK, and
+# exposes one tool, `whoami`, that returns its own pod name. That's what
+# makes it possible to see, in the tool call's own response, exactly
+# which backend pod actually answered once a second server joins.
+#
+# Deployed into `agentgateway-system`, the same namespace as the
+# AgentgatewayBackend in 01-gateway-and-backend.yaml. This isn't a style
+# choice: confirmed live (not documented anywhere), a selector-based MCP
+# target only discovers Services in the AgentgatewayBackend's own
+# namespace. A Service carrying the same label in a different namespace
+# is invisible to it and the gateway answers every MCP call with
+# `mcp: no backends configured`. `static.host` targets don't have this
+# restriction, since a DNS string can point anywhere in the cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-server-a-script
+  namespace: agentgateway-system
+data:
+  server.py: |
+    import socket
+    from mcp.server.mcpserver import MCPServer
+
+    mcp = MCPServer("dynamic-fetcher-a")
+
+    @mcp.tool()
+    def whoami() -> str:
+        """Return the pod name answering this call."""
+        return socket.gethostname()
+
+    if __name__ == "__main__":
+        mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server-a
+  namespace: agentgateway-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-server-a
+  template:
+    metadata:
+      labels:
+        app: mcp-server-a
+    spec:
+      containers:
+        - name: mcp-server-a
+          image: python:3.12-slim
+          command: ["sh", "-c", "pip install --quiet mcp && python3 /app/server.py"]
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: mcp-server-a-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server-a
+  namespace: agentgateway-system
+  # This is the label agentgateway's selector target
+  # (01-gateway-and-backend.yaml) watches for. Any Service carrying it,
+  # in this same namespace, becomes an MCP target automatically.
+  labels:
+    mcp-role: dynamic-fetcher
+spec:
+  selector:
+    app: mcp-server-a
+  ports:
+    - port: 8000
+      targetPort: 8000
+      appProtocol: agentgateway.dev/mcp

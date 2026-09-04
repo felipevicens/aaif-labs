@@ -1,0 +1,68 @@
+# Not applied during setup. This is Scenario B's own file: a second,
+# independent MCP server, same tool name, same label, in the same
+# namespace as the AgentgatewayBackend (agentgateway-system) since that's
+# what the selector actually requires (see 02-mcp-server-a.yaml's header).
+# Nothing in 01-gateway-and-backend.yaml changes to make this show up.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-server-b-script
+  namespace: agentgateway-system
+data:
+  server.py: |
+    import socket
+    from mcp.server.mcpserver import MCPServer
+
+    mcp = MCPServer("dynamic-fetcher-b")
+
+    @mcp.tool()
+    def whoami() -> str:
+        """Return the pod name answering this call."""
+        return socket.gethostname()
+
+    if __name__ == "__main__":
+        mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server-b
+  namespace: agentgateway-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-server-b
+  template:
+    metadata:
+      labels:
+        app: mcp-server-b
+    spec:
+      containers:
+        - name: mcp-server-b
+          image: python:3.12-slim
+          command: ["sh", "-c", "pip install --quiet mcp && python3 /app/server.py"]
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: mcp-server-b-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server-b
+  namespace: agentgateway-system
+  labels:
+    mcp-role: dynamic-fetcher
+spec:
+  selector:
+    app: mcp-server-b
+  ports:
+    - port: 8000
+      targetPort: 8000
+      appProtocol: agentgateway.dev/mcp

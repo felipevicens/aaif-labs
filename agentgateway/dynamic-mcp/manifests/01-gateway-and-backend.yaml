@@ -1,0 +1,59 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# Unlike D1's `static` targets (one YAML entry per backend, host/port known
+# up front), this target is a label `selector`. agentgateway watches for
+# any Service carrying this label and adds/drops it as an MCP target
+# automatically, no edit to this resource, no gateway restart. Per
+# agentgateway's own docs, label-selector targets only support Streamable
+# HTTP, not SSE, which is why the servers in 02/03 use the Streamable HTTP
+# transport instead of D1's SSE-only image.
+#
+# Confirmed live (not documented anywhere): "any Service" really means
+# "any Service in this namespace". A Service carrying this label in a
+# different namespace is invisible to the selector, so 02/03's servers
+# live in agentgateway-system too, not their own namespace like D1's did.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: dynamic-tools
+  namespace: agentgateway-system
+spec:
+  mcp:
+    targets:
+      - name: dynamic-tools
+        selector:
+          services:
+            matchLabels:
+              mcp-role: dynamic-fetcher
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: dynamic-tools
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      backendRefs:
+        - name: dynamic-tools
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
