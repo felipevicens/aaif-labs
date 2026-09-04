@@ -1,0 +1,22 @@
+# Delegates the allow/deny decision to the ext-authz Service before the
+# request ever reaches httpbun. Attached at traffic level (before backend
+# selection), same targetRefs mechanism as every AgentgatewayPolicy in
+# this series. No CEL rule here: the ext-authz service makes the whole
+# decision itself, agentgateway just carries the request to it and back.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: byo-ext-authz
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: guarded-model
+  traffic:
+    extAuth:
+      backendRef:
+        name: ext-authz
+        namespace: agentgateway-system
+        port: 9000
+      grpc: {}
