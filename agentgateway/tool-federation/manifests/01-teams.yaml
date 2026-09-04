@@ -1,0 +1,191 @@
+# Five independent teams, each running their own instance of the same
+# real MCP server (ghcr.io/peterj/mcp-website-fetcher:main, one tool:
+# fetch). Deliberately the same image five times: it makes the tool-name
+# prefixing mechanism the ONLY thing that disambiguates five identical
+# "fetch" tools, which is a better test of federation than five different
+# tool names would be. Swap any of these for a genuinely different MCP
+# server; nothing about the federation mechanism below cares.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-teams
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docs-fetcher
+  namespace: mcp-teams
+  labels:
+    app: docs-fetcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docs-fetcher
+  template:
+    metadata:
+      labels:
+        app: docs-fetcher
+    spec:
+      containers:
+        - name: fetcher
+          image: ghcr.io/peterj/mcp-website-fetcher:main
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: docs-fetcher
+  namespace: mcp-teams
+spec:
+  selector:
+    app: docs-fetcher
+  ports:
+    - port: 8000
+      targetPort: 8000
+      appProtocol: agentgateway.dev/mcp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: growth-fetcher
+  namespace: mcp-teams
+  labels:
+    app: growth-fetcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: growth-fetcher
+  template:
+    metadata:
+      labels:
+        app: growth-fetcher
+    spec:
+      containers:
+        - name: fetcher
+          image: ghcr.io/peterj/mcp-website-fetcher:main
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: growth-fetcher
+  namespace: mcp-teams
+spec:
+  selector:
+    app: growth-fetcher
+  ports:
+    - port: 8000
+      targetPort: 8000
+      appProtocol: agentgateway.dev/mcp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platform-fetcher
+  namespace: mcp-teams
+  labels:
+    app: platform-fetcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: platform-fetcher
+  template:
+    metadata:
+      labels:
+        app: platform-fetcher
+    spec:
+      containers:
+        - name: fetcher
+          image: ghcr.io/peterj/mcp-website-fetcher:main
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-fetcher
+  namespace: mcp-teams
+spec:
+  selector:
+    app: platform-fetcher
+  ports:
+    - port: 8000
+      targetPort: 8000
+      appProtocol: agentgateway.dev/mcp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-fetcher
+  namespace: mcp-teams
+  labels:
+    app: data-fetcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-fetcher
+  template:
+    metadata:
+      labels:
+        app: data-fetcher
+    spec:
+      containers:
+        - name: fetcher
+          image: ghcr.io/peterj/mcp-website-fetcher:main
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-fetcher
+  namespace: mcp-teams
+spec:
+  selector:
+    app: data-fetcher
+  ports:
+    - port: 8000
+      targetPort: 8000
+      appProtocol: agentgateway.dev/mcp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search-fetcher
+  namespace: mcp-teams
+  labels:
+    app: search-fetcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: search-fetcher
+  template:
+    metadata:
+      labels:
+        app: search-fetcher
+    spec:
+      containers:
+        - name: fetcher
+          image: ghcr.io/peterj/mcp-website-fetcher:main
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: search-fetcher
+  namespace: mcp-teams
+spec:
+  selector:
+    app: search-fetcher
+  ports:
+    - port: 8000
+      targetPort: 8000
+      appProtocol: agentgateway.dev/mcp
