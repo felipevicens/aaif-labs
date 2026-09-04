@@ -1,0 +1,45 @@
+# The policy that actually gates the MCP endpoint: validates a JWT issued
+# by Keycloak (mode: Strict, so a missing/invalid token is rejected
+# outright), enables the MCP-spec OAuth surface (protected-resource
+# metadata + proxied Dynamic Client Registration) via `mcp.provider:
+# Keycloak`, and then applies CEL-based authorization on top of the
+# validated token's own claims — a different, independent check from
+# D4's tool-name RBAC, this time keyed on `jwt.realm_access.roles`.
+#
+# Uses `spec.traffic.jwtAuthentication`, not the deprecated
+# `spec.backend.mcp.authentication` — the CRD schema's own description
+# says the deprecated field runs after other policies like rate limiting,
+# while this one runs first, before anything else touches the request.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: mcp-jwt-auth
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: mcp-server
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: http://keycloak.mcp-auth.svc.cluster.local:8080/realms/master
+          audiences:
+            - http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/mcp
+          jwks:
+            remote:
+              url: http://keycloak.mcp-auth.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs
+      mcp:
+        provider: Keycloak
+        resourceMetadata:
+          resource: http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/mcp
+          scopesSupported:
+            - openid
+          bearerMethodsSupported:
+            - header
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+          - 'has(jwt.realm_access) && "mcp-user" in jwt.realm_access.roles'

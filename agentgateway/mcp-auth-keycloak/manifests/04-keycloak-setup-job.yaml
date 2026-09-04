@@ -1,0 +1,100 @@
+# One-shot Job that configures Keycloak's built-in `master` realm via
+# kcadm.sh once the Deployment is ready: an audience client-scope +
+# mapper, a public OAuth client for this lab, a realm role gating access,
+# and two test users (one with the role, one without) to prove the
+# AgentgatewayPolicy's CEL authorization rule really discriminates on it.
+# No realm-import file — matches agentgateway's own Kubernetes guide.
+# Also relaxes the realm's client-registration policies, the same step
+# that guide takes, so agentgateway can proxy Dynamic Client Registration
+# for an MCP client that has never talked to Keycloak before.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-setup-script
+  namespace: mcp-auth
+data:
+  setup.sh: |
+    set -euo pipefail
+
+    KC="/opt/keycloak/bin/kcadm.sh"
+    SERVER="http://keycloak.mcp-auth.svc.cluster.local:8080"
+    RESOURCE="http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/mcp"
+
+    echo "Waiting for Keycloak to accept admin login..."
+    for i in $(seq 1 40); do
+      if $KC config credentials --server "$SERVER" --realm master \
+           --user admin --password admin >/tmp/kcadm.log 2>&1; then
+        break
+      fi
+      sleep 3
+    done
+    cat /tmp/kcadm.log || true
+
+    echo "Creating audience client-scope..."
+    SCOPE_ID=$($KC create client-scopes -r master \
+      -s name=mcp-audience -s protocol=openid-connect \
+      -s 'attributes."include.in.token.scope"=true' -i)
+
+    AUD_ARG='config."included.custom.audience"='"$RESOURCE"
+    $KC create client-scopes/"$SCOPE_ID"/protocol-mappers/models -r master \
+      -s name=mcp-audience-mapper -s protocol=openid-connect \
+      -s protocolMapper=oidc-audience-mapper \
+      -s "$AUD_ARG" \
+      -s 'config."access.token.claim"=true' \
+      -s 'config."id.token.claim"=false'
+
+    echo "Creating the lab's OAuth client..."
+    CLIENT_ID=$($KC create clients -r master \
+      -s clientId=agentgateway \
+      -s publicClient=true \
+      -s directAccessGrantsEnabled=true \
+      -s standardFlowEnabled=true \
+      -s 'redirectUris=["http://localhost:8080/*"]' -i)
+
+    $KC update clients/"$CLIENT_ID"/default-client-scopes/"$SCOPE_ID" -r master
+
+    echo "Creating the mcp-user realm role..."
+    $KC create roles -r master -s name=mcp-user
+
+    echo "Creating test users..."
+    $KC create users -r master -s username=user1 -s enabled=true -i >/dev/null
+    $KC set-password -r master --username user1 --new-password user1pass
+    $KC add-roles -r master --uusername user1 --rolename mcp-user
+
+    $KC create users -r master -s username=user2 -s enabled=true -i >/dev/null
+    $KC set-password -r master --username user2 --new-password user2pass
+
+    echo "Relaxing client-registration policies for proxied DCR..."
+    for CID in $($KC get components -r master \
+        --query 'type=org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy' \
+        --fields id --format csv --noquotes); do
+      $KC delete components/"$CID" -r master || true
+    done
+
+    echo "Keycloak setup complete."
+    echo "issuer=$SERVER/realms/master"
+    echo "jwks=$SERVER/realms/master/protocol/openid-connect/certs"
+    echo "resource=$RESOURCE"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-setup
+  namespace: mcp-auth
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: keycloak-setup
+          image: quay.io/keycloak/keycloak:26.7.1
+          command: ["/bin/bash", "/scripts/setup.sh"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: keycloak-setup-script
+            defaultMode: 0755

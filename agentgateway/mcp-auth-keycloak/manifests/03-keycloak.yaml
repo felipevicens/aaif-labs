@@ -1,0 +1,59 @@
+# Keycloak, `start-dev` mode: no external database, no realm-import file,
+# entirely self-contained. Matches agentgateway's own reference guide
+# (agentgateway.dev/docs/kubernetes/latest/mcp/auth/keycloak/), which
+# configures the built-in `master` realm imperatively via kcadm.sh rather
+# than shipping a realm-export JSON — 04-keycloak-setup-job.yaml does that
+# once this Deployment is ready.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: mcp-auth
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.7.1
+          args: ["start-dev"]
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              value: admin
+            # Without a fixed hostname, Keycloak stamps the `iss` claim
+            # from whatever Host header the client used to reach it — a
+            # port-forward on localhost and an in-cluster Service DNS
+            # name produce two different issuer strings for the same
+            # realm. jwtAuthentication.providers[].issuer has to match
+            # exactly, so pin it to the in-cluster DNS name.
+            - name: KC_HOSTNAME
+              value: http://keycloak.mcp-auth.svc.cluster.local:8080
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /realms/master
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 40
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: mcp-auth
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - port: 8080
+      targetPort: 8080
