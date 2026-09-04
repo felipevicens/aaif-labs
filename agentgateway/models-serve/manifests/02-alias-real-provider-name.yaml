@@ -1,0 +1,24 @@
+# Scenario A: expose the real local smollm2 model under a client-facing
+# name that looks exactly like a hosted provider's own model, gpt-4.
+# spec.match is omitted, so the exact-match target is metadata.name
+# ("gpt-4"), a valid Kubernetes object name. The transformation rewrites
+# the model field to Ollama's own tag before the request leaves the
+# gateway; without it, Ollama would receive "gpt-4" and reject it with
+# "model not found" since no local model is actually named that.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: gpt-4
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      sectionName: http
+  provider: OpenAI
+  baseURL: http://ollama.default.svc.cluster.local:11434/v1
+  policies:
+    transformations:
+      - field: model
+        expression: '"smollm2:135m"'

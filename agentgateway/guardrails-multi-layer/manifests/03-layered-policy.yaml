@@ -1,0 +1,65 @@
+# The multi-layer guardrail itself: one AgentgatewayPolicy, targeting
+# both HTTPRoutes from 01-gateway-and-backends.yaml, with three request
+# guards run in order (regex, then the webhook) and one response guard.
+# Layer order matters: a request the regex guard rejects never reaches
+# the webhook at all, proven in the post by the webhook pod's own logs
+# staying empty for that request.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: content-safety-layered
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: guarded-llm
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: guarded-llm-cc
+  backend:
+    ai:
+      promptGuard:
+        request:
+        # Layer 1: regex, built-in PII patterns. Cheapest check, runs first.
+        - regex:
+            builtins:
+              - Ssn
+              - CreditCard
+              - Email
+            action: Reject
+          response:
+            message: "Request blocked: contains personally identifiable information."
+        # Layer 2: the lab's own webhook, domain-specific logic regex can't
+        # express (a forbidden business term, not a PII pattern).
+        - webhook:
+            backendRef:
+              kind: Service
+              name: guardrail-webhook
+              port: 8000
+        response:
+        # Response guard: masks a credit-card-shaped string in the
+        # completion before it reaches the client, instead of rejecting.
+        - regex:
+            builtins:
+              - CreditCard
+            action: Mask
+---
+# Separate policy, targeting the webhook's own Service (not the HTTPRoute):
+# the docs' pattern for setting a request timeout on a specific guard
+# backend. Left at the documented default failureMode (FailClosed) on
+# purpose, so Gotchas can show what a broken guard actually does to
+# otherwise-clean traffic.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: guardrail-webhook-timeout
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: guardrail-webhook
+  backend:
+    http:
+      requestTimeout: 5s

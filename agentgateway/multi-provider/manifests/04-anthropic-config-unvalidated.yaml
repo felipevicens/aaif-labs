@@ -1,0 +1,73 @@
+# =============================================================================
+# REFERENCE ONLY. NOT VALIDATED. NOT APPLIED BY scripts/setup.sh.
+# =============================================================================
+# This file was never run against a live cluster: the author has no Anthropic
+# key to spend on a validation pass for this post, so it is included purely
+# to show the shape of an `anthropic` LLMProvider entry, following the same
+# secretRef pattern as OpenAI (02-*) and Gemini (03-*). Treat every field
+# below as a best-effort guess consistent with the CRD facts this lab was
+# written from, not a confirmed-working config:
+#   - the model ID (claude-3-5-haiku-20241022) is a real Anthropic model name,
+#     not something taken from the agentgateway docs.
+#   - the HTTPRoute's rewrite target (/v1/messages) is Anthropic's own
+#     Messages API path, again from general knowledge of Anthropic's API, not
+#     from agentgateway's CRD reference — unconfirmed whether agentgateway's
+#     `anthropic` provider needs this rewrite at all, or handles the native
+#     path internally the way it may for openai/gemini (see 02-* header).
+# If you want to validate this yourself: apply it manually (it is
+# deliberately left out of setup.sh and 00-cluster-and-install.md's apply
+# order), export ANTHROPIC_API_KEY, and test against /llm/anthropic.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-credentials
+  namespace: agentgateway-system
+type: Opaque
+stringData:
+  Authorization: "${ANTHROPIC_API_KEY}"
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic-llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: claude-3-5-haiku-20241022
+  # `policies` is a sibling of `ai`, not nested inside it: this structural
+  # shape IS confirmed, live, against Scenario 2's identical OpenAI backend
+  # (spec.ai.policies is rejected with a strict decoding error). What is
+  # NOT confirmed is this file's own content: the model name and whether
+  # Anthropic needs any route-level rewrite, see the file header above.
+  policies:
+    auth:
+      secretRef:
+        name: anthropic-credentials
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: anthropic-llm
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/anthropic
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/messages
+      backendRefs:
+        - name: anthropic-llm
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

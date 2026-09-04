@@ -1,0 +1,63 @@
+# Two AgentgatewayPolicies, one per guard direction, plus the same
+# Service-targeting pattern B1 used for the webhook's own requestTimeout.
+#
+# The request-side guard sets failureMode: FailOpen explicitly. B1 never
+# set this field at all and left it at the documented default,
+# FailClosed, which B1's own gotcha proved: a down webhook blocked every
+# request with a 503. This lab sets the opposite on purpose, so the
+# gotcha here is the mirror image: what a down guard does to otherwise-
+# clean traffic when it's configured to fail open instead of closed.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: webhook-request-guard
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: guarded-webhook-request
+  backend:
+    ai:
+      promptGuard:
+        request:
+        - webhook:
+            backendRef:
+              kind: Service
+              name: guardrail-webhook
+              port: 8000
+            failureMode: FailOpen
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: webhook-response-guard
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: guarded-webhook-response
+  backend:
+    ai:
+      promptGuard:
+        response:
+        - webhook:
+            backendRef:
+              kind: Service
+              name: guardrail-webhook
+              port: 8000
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: guardrail-webhook-timeout
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: guardrail-webhook
+  backend:
+    http:
+      requestTimeout: 5s

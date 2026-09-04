@@ -1,0 +1,55 @@
+# Scenario A/B: the stable, documented failover mechanism.
+# One AgentgatewayBackend, spec.ai.groups (PriorityGroup, array order IS
+# priority): group 0 is httpbun-primary-bad on /status/500 (always a real
+# HTTP 500), group 1 is the healthy httpbun on the mocked completions path.
+# On its own this backend does nothing special: without a health policy
+# (03-health-eviction-policy.yaml) a 500 from group 0 is just a 500 to the
+# client, every time. That policy is what turns this into failover.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: resilient-llm
+  namespace: default
+spec:
+  ai:
+    groups:
+      - providers:
+          - name: primary
+            openai:
+              model: gpt-4
+            host: httpbun-primary-bad.default.svc.cluster.local
+            port: 3090
+            path: "/status/500"
+      - providers:
+          - name: fallback
+            openai:
+              model: gpt-4
+            host: httpbun.default.svc.cluster.local
+            port: 3090
+            path: "/llm/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: resilient-llm
+  namespace: default
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/resilient
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: resilient-llm
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

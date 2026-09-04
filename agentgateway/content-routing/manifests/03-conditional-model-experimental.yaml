@@ -1,0 +1,98 @@
+# Scenario B: the newer, experimental way to make the same routing decision.
+# agentgateway.dev/docs/kubernetes/main/llm/models/virtual (the AgentgatewayModel
+# API's "Virtual models" guide) calls this out explicitly as one of three
+# virtualModel strategies (weighted, failover, conditional) and documents
+# conditional as the one built for exactly this: "Tiering by header, body,
+# or other request context."
+#
+# internal-fast and internal-premium are both Internal AgentgatewayModels
+# (clients can't request them by name, they only exist as virtualModel
+# targets) pointing at the same shared httpbun. Same proof technique as
+# Scenario A, but at the model layer instead of the backend layer:
+# policies.transformations rewrites the model field agentgateway sends
+# upstream, and httpbun's mock echoes it straight back in the response.
+#
+# routed-tier is the virtual model clients actually call. Its when
+# expression reads json(request.body) directly - unlike Scenario A, no
+# separate PreRouting policy is needed to pull a field out of the body
+# first, because virtualModel.conditional's own when field already runs
+# full CEL, json() included, against the request.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: internal-fast
+  namespace: default
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  match:
+    model: internal-fast
+  visibility: Internal
+  provider: Custom
+  custom:
+    backendRef:
+      kind: Service
+      name: httpbun
+      port: 3090
+    formats:
+      - type: Completions
+        path: "/llm/chat/completions"
+  policies:
+    transformations:
+      - field: model
+        expression: '"resolved-fast"'
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: internal-premium
+  namespace: default
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  match:
+    model: internal-premium
+  visibility: Internal
+  provider: Custom
+  custom:
+    backendRef:
+      kind: Service
+      name: httpbun
+      port: 3090
+    formats:
+      - type: Completions
+        path: "/llm/chat/completions"
+  policies:
+    transformations:
+      - field: model
+        expression: '"resolved-premium"'
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: routed-tier
+  namespace: default
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  match:
+    model: routed-tier
+  visibility: Public
+  virtualModel:
+    conditional:
+      targets:
+        - when: 'json(request.body).tier == "premium"'
+          modelRef: {name: internal-premium}
+        - modelRef: {name: internal-fast}

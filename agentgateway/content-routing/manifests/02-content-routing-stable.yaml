@@ -1,0 +1,112 @@
+# Scenario A: the stable, documented way to route on request content.
+# agentgateway has no "route by JSON field" primitive on its own - Gateway
+# API only matches on path/method/headers. So this pattern is two ordinary
+# pieces composed: an AgentgatewayPolicy pulls a field out of the JSON body
+# into a header (must run in the PreRouting phase, targeting the Gateway,
+# so the header exists before route matching happens - too late otherwise),
+# then the HTTPRoute matches on that header like it would on any other.
+#
+# Both backends point at the same shared httpbun and both hit its mocked
+# /llm/chat/completions path. What proves routing actually happened is each
+# AgentgatewayBackend's own ai.provider.openai.model: it overwrites the
+# model field agentgateway sends upstream regardless of what the client
+# asked for, and httpbun's mock echoes the model field straight back - so
+# the response's own "model" value names which backend served the request.
+#
+# extract-tier lives in agentgateway-system, not default: AgentgatewayPolicy's
+# targetRefs has no namespace field (confirmed live: the API server rejects
+# it as an unknown field), so a policy can only target an object in its own
+# namespace. Targeting the Gateway means the policy has to sit next to it.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: fast-tier
+  namespace: default
+spec:
+  ai:
+    provider:
+      openai:
+        model: fast-v1
+      host: httpbun.default.svc.cluster.local
+      port: 3090
+      path: "/llm/chat/completions"
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: premium-tier
+  namespace: default
+spec:
+  ai:
+    provider:
+      openai:
+        model: premium-v1
+      host: httpbun.default.svc.cluster.local
+      port: 3090
+      path: "/llm/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: content-routing
+  namespace: default
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  rules:
+    # Order matters: the premium match must come first. HTTPRoute rules are
+    # evaluated top to bottom and the first match wins, so a catch-all rule
+    # with no header match (below) has to be last or it would swallow every
+    # request before the premium rule ever gets a chance.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/routed
+          headers:
+            - type: Exact
+              name: x-tier
+              value: premium
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: premium-tier
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/routed
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: fast-tier
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: extract-tier
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+  traffic:
+    phase: PreRouting
+    transformation:
+      request:
+        set:
+          - name: "x-tier"
+            value: 'coalesce(json(request.body).tier, "standard")'

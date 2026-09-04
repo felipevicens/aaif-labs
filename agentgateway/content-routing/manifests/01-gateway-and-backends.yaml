@@ -1,0 +1,101 @@
+# Gateway (same shape as A1/A2) plus two httpbun-backed Deployments/Services.
+# `httpbun` is shared by Scenarios A and B: neither one needs per-endpoint
+# health tracking, so one mock backend can stand in for as many logical
+# "tiers" as the routing config points at it. `httpbun-broken` exists only
+# for the Scenario C gotcha, which deliberately evicts a target - kept as
+# its own separate Service on purpose, same reason as A2: agentgateway
+# tracks eviction health per (Service, endpoint), so sharing a Service
+# between a broken path and a healthy one evicts both.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+          - group: agentgateway.dev
+            kind: AgentgatewayModel
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbun
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbun
+  template:
+    metadata:
+      labels:
+        app: httpbun
+    spec:
+      containers:
+        - name: httpbun
+          image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTPBUN_BIND
+              value: "0.0.0.0:3090"
+          ports:
+            - containerPort: 3090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbun
+  namespace: default
+spec:
+  selector:
+    app: httpbun
+  ports:
+    - port: 3090
+      targetPort: 3090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbun-broken
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbun-broken
+  template:
+    metadata:
+      labels:
+        app: httpbun-broken
+    spec:
+      containers:
+        - name: httpbun
+          image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTPBUN_BIND
+              value: "0.0.0.0:3090"
+          ports:
+            - containerPort: 3090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbun-broken
+  namespace: default
+spec:
+  selector:
+    app: httpbun-broken
+  ports:
+    - port: 3090
+      targetPort: 3090

@@ -1,0 +1,30 @@
+# Scenario A: failover, but not transparent. One out-of-band
+# AgentgatewayPolicy, targeting the AgentgatewayBackend directly (not the
+# route), with spec.backend.health.eviction. consecutiveFailures: 1 means
+# a single unhealthy response evicts group 0 immediately: the very next
+# request already lands on the healthy fallback.
+#
+# Live-tested behavior (agentgateway v1.5.0), from a clean cluster,
+# 4 requests to /llm/resilient in a row:
+#   request 1: HTTP 500, httpbun's real "Internal Server Error" body -
+#     eviction has not registered yet, so the client sees the primary's
+#     actual failure.
+#   requests 2-4: HTTP 200, the mocked completion from the healthy
+#     fallback - group 0 is now evicted, so the load balancer skips it on
+#     every subsequent request without even trying it.
+# So this alone gets you automatic recovery, but the very first failure
+# still reaches the client. 04-retry-policy.yaml fixes that.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: resilient-llm-health
+  namespace: default
+spec:
+  targetRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: resilient-llm
+  backend:
+    health:
+      eviction:
+        consecutiveFailures: 1

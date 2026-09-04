@@ -1,0 +1,286 @@
+# Gateway (same shape as the rest of this series) plus two mock LLM
+# backends, both lab-owned, both echo the caller's own last message back
+# in the completion instead of returning a fixed body. That's what makes
+# both scenarios provable from curl output alone: the response shows
+# exactly what the backend actually received, after whatever the webhook
+# guard did to it, not just what the webhook's own logs claim happened.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# Echoes the last request message's content back verbatim as the
+# completion. Scenario A and the FailOpen gotcha both use this: whatever
+# string shows up in the response is exactly what reached this backend,
+# proving the request-side webhook's Mask rewrite (or its FailOpen
+# bypass) actually took effect upstream of here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: echo-backend-script
+  namespace: default
+data:
+  server.py: |
+    import json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length)
+            try:
+                payload = json.loads(raw or b'{}')
+            except json.JSONDecodeError:
+                payload = {}
+            messages = payload.get('messages', [])
+            last_content = messages[-1]['content'] if messages else ''
+            body = {
+                "model": "gpt-4",
+                "usage": {"prompt_tokens": 12, "completion_tokens": 12, "total_tokens": 24},
+                "choices": [{
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": last_content},
+                }],
+                "id": "chatcmpl-echo0000000000000000001",
+                "object": "chat.completion",
+                "created": 1788500000,
+            }
+            out = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, fmt, *args):
+            pass
+
+    HTTPServer(('0.0.0.0', 8080), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-backend
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo-backend
+  template:
+    metadata:
+      labels:
+        app: echo-backend
+    spec:
+      containers:
+        - name: echo-backend
+          image: python:3.12-alpine
+          command: ["python3", "/app/server.py"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: echo-backend-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-backend
+  namespace: default
+spec:
+  selector:
+    app: echo-backend
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+# The response-side scenario's backend: a fixed, deterministic "model"
+# whose completion depends on what the caller asked, the same trick as
+# a real model producing different output for different prompts. Asking
+# about "internal service details" gets a completion containing a
+# fabricated internal hostname; asking to "escalate" gets a completion
+# containing a trigger phrase used only to test what a response-side
+# webhook's Reject verdict actually does.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-completions-response-script
+  namespace: default
+data:
+  server.py: |
+    import json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length)
+            try:
+                payload = json.loads(raw or b'{}')
+            except json.JSONDecodeError:
+                payload = {}
+            messages = payload.get('messages', [])
+            last_content = (messages[-1]['content'] if messages else '').lower()
+            if 'escalate' in last_content:
+                content = "This escalates to REJECT_TEST_TRIGGER right away."
+            else:
+                content = "You can reach the internal service at internal-host-7.corp.local for support."
+            body = {
+                "model": "gpt-4",
+                "usage": {"prompt_tokens": 12, "completion_tokens": 18, "total_tokens": 30},
+                "choices": [{
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": content},
+                }],
+                "id": "chatcmpl-mockresp000000000000001",
+                "object": "chat.completion",
+                "created": 1788500000,
+            }
+            out = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, fmt, *args):
+            pass
+
+    HTTPServer(('0.0.0.0', 8080), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-completions-response
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-completions-response
+  template:
+    metadata:
+      labels:
+        app: mock-completions-response
+    spec:
+      containers:
+        - name: mock-completions-response
+          image: python:3.12-alpine
+          command: ["python3", "/app/server.py"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: mock-completions-response-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-completions-response
+  namespace: default
+spec:
+  selector:
+    app: mock-completions-response
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: guarded-webhook-request
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4
+      host: echo-backend.default.svc.cluster.local
+      port: 8080
+      path: "/v1/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: guarded-webhook-request
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/guarded-webhook-request
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: guarded-webhook-request
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: guarded-webhook-response
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4
+      host: mock-completions-response.default.svc.cluster.local
+      port: 8080
+      path: "/v1/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: guarded-webhook-response
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/guarded-webhook-response
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: guarded-webhook-response
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

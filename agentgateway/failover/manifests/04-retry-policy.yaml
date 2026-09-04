@@ -1,0 +1,34 @@
+# Scenario B: transparent failover, layered on top of 03. A second
+# AgentgatewayPolicy, targeting the HTTPRoute (traffic policies attach to
+# routes/gateways, not backends), with spec.traffic.retry. attempts: 2
+# means agentgateway retries once on a matching status code. Combined with
+# 03's eviction, the retry's second attempt sees group 0 already evicted
+# and lands on the fallback within the SAME client request.
+#
+# Live-tested (agentgateway v1.5.0), from a clean cluster, with this
+# policy applied alongside 03 from the start: the FIRST request ever sent
+# already returns HTTP 200 with the fallback's mocked completion body.
+# Proxy access log for that request shows retry.attempt=1 and a real
+# duration (23ms, vs. the near-0ms of a single try) - the retry genuinely
+# happened, the client just never saw the intermediate 500.
+#
+# Without a health policy, retry alone does not achieve this: every retry
+# attempt would just hit group 0 again, since nothing ever marks it
+# degraded. The two policies are independent CRDs on purpose (health can
+# live on the backend, owned by whoever runs it; retry can live on the
+# route, owned by whoever owns the API) but neither one alone is failover.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: resilient-llm-retry
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: resilient-llm
+  traffic:
+    retry:
+      attempts: 2
+      backoff: 10ms
+      codes: [500, 502, 503, 504]

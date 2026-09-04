@@ -1,0 +1,28 @@
+# Scenario B: scope: [ToolOutput], adapted directly from agentgateway's own
+# "Scan tool call content" example. `scope` sits as a sibling of `regex`
+# inside the request-list entry, not nested under it. What actually counts
+# as "tool output" at the wire level isn't documented anywhere; this lab's
+# own live validation is what answers that (a role: "tool" message vs. a
+# role: "user" message carrying the identical SSN string).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: tool-output-guard
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: guarded-tool
+  backend:
+    ai:
+      promptGuard:
+        request:
+        - scope:
+            - ToolOutput
+          regex:
+            action: Reject
+            builtins:
+              - Ssn
+          response:
+            message: "Tool output contains PII"

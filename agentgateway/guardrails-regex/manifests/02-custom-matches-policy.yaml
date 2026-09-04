@@ -1,0 +1,25 @@
+# Scenario A: a custom regex pattern, not one of the builtin PII names,
+# catching a secret shape none of them cover (an AWS-access-key-style
+# string). Explicit statusCode, a field B1 never exercised (it only ever
+# used response.message and let the status default).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: secret-pattern-guard
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: guarded-secret
+  backend:
+    ai:
+      promptGuard:
+        request:
+        - regex:
+            matches:
+              - "\\bAKIA[0-9A-Z]{16}\\b"
+            action: Reject
+          response:
+            message: "Request blocked: this looks like an AWS access key. Do not paste credentials into prompts."
+            statusCode: 422

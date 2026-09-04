@@ -1,0 +1,7 @@
+# Pins the kind node image so `kind create cluster` doesn't pick up whatever
+# kindest/node tag happens to be cached locally. v1.34.0, same pin as A1/A2.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.34.0

@@ -1,0 +1,145 @@
+# The lab's own guardrail webhook, implementing the real contract on both
+# endpoints: POST /request (PromptMessages body) and POST /response
+# (ResponseChoices body), each replying with a discriminated Pass/Mask/
+# Reject action nested under a top-level "action" key.
+#
+# /request: partially redacts an internal API-key format instead of
+# replacing the whole match, something a regex guard's builtin Mask can't
+# do (it swaps the entire match for one fixed placeholder). Pass otherwise.
+#
+# /response: masks a fabricated internal hostname out of the completion.
+# It also answers one open, undocumented question this lab exists to
+# settle: the reference OpenAPI spec's response schema only allows
+# Pass/Mask, never Reject, on this endpoint. Content containing
+# "REJECT_TEST_TRIGGER" makes this webhook return a Reject-shaped action
+# on /response anyway, to see what agentgateway 1.5.0 actually does with
+# it. Every call also prints its own received header names to stdout, so
+# validation can confirm directly whether agentgateway sends this webhook
+# any authentication header at all.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: guardrail-webhook-script
+  namespace: agentgateway-system
+data:
+  server.py: |
+    import json
+    import re
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    KEY_PATTERN = re.compile(r'internal_sk_[0-9a-f]{16}')
+    HOSTNAME_PATTERN = re.compile(r'internal-host-\d+\.corp\.local')
+
+    def partial_redact(match):
+        full = match.group(0)
+        prefix = full[:16]  # "internal_sk_" + first 4 hex chars
+        return prefix + '*' * (len(full) - 16)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length)
+            try:
+                payload = json.loads(raw or b'{}')
+            except json.JSONDecodeError:
+                payload = {}
+
+            print(self.path + " headers: " + ",".join(sorted(self.headers.keys())), flush=True)
+
+            if self.path == '/request':
+                self.handle_request(payload)
+            elif self.path == '/response':
+                self.handle_response(payload)
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def handle_request(self, payload):
+            messages = payload.get('body', {}).get('messages', [])
+            changed = False
+            new_messages = []
+            for m in messages:
+                content = m.get('content', '')
+                if KEY_PATTERN.search(content):
+                    content = KEY_PATTERN.sub(partial_redact, content)
+                    changed = True
+                new_messages.append({"role": m.get('role', 'user'), "content": content})
+
+            if changed:
+                verdict = "Mask"
+                result = {"action": {"body": {"messages": new_messages}, "reason": "partial-redaction: internal API key"}}
+            else:
+                verdict = "Pass"
+                result = {"action": {"reason": None}}
+            self.reply(result, verdict)
+
+        def handle_response(self, payload):
+            choices = payload.get('body', {}).get('choices', [])
+            content = choices[0].get('message', {}).get('content', '') if choices else ''
+
+            if 'REJECT_TEST_TRIGGER' in content:
+                verdict = "Reject (response-side, undocumented, testing)"
+                result = {"action": {"body": "Blocked: escalation trigger detected in response", "status_code": 403, "reason": "response-side-reject-test"}}
+            elif HOSTNAME_PATTERN.search(content):
+                verdict = "Mask"
+                redacted = HOSTNAME_PATTERN.sub('<INTERNAL_HOSTNAME>', content)
+                result = {"action": {"body": {"choices": [{"message": {"role": "assistant", "content": redacted}}]}, "reason": "redacted internal hostname"}}
+            else:
+                verdict = "Pass"
+                result = {"action": {"reason": None}}
+            self.reply(result, verdict)
+
+        def reply(self, result, verdict):
+            out = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+            print(self.path + " -> " + verdict, flush=True)
+
+        def log_message(self, fmt, *args):
+            pass
+
+    HTTPServer(('0.0.0.0', 8000), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guardrail-webhook
+  namespace: agentgateway-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guardrail-webhook
+  template:
+    metadata:
+      labels:
+        app: guardrail-webhook
+    spec:
+      containers:
+        - name: guardrail-webhook
+          image: python:3.12-alpine
+          command: ["python3", "/app/server.py"]
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: guardrail-webhook-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guardrail-webhook
+  namespace: agentgateway-system
+spec:
+  selector:
+    app: guardrail-webhook
+  ports:
+    - port: 8000
+      targetPort: 8000

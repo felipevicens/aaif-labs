@@ -1,0 +1,106 @@
+# Scenario C: the gotcha. agentgateway also has a second, newer way to
+# describe failover: AgentgatewayModel.virtualModel.failover, one CRD per
+# model instead of an AgentgatewayBackend + out-of-band policies. The docs
+# call it out explicitly as experimental (agentgateway.dev/docs/kubernetes/
+# main/llm/failover, "you can also configure failover with the
+# experimental AgentgatewayModel API"), and this scenario is why that
+# label matters: the exact same failure, the exact same eviction policy
+# (inline here, since AgentgatewayPolicy's targetRefs does not accept
+# AgentgatewayModel as a kind), reproducibly does not fail over.
+#
+# primary-model and fallback-model point at the SAME two backends as
+# Scenario A/B (httpbun-primary-bad, and the healthy httpbun), just
+# through AgentgatewayModel.custom.backendRef instead of
+# AgentgatewayBackend.spec.ai.groups. resilient-virtualmodel wraps them
+# with virtualModel.failover, targets[].priority the same way 02's groups
+# used array order.
+#
+# Live-tested (agentgateway v1.5.0), from a clean cluster: 5 separate,
+# sequential requests to model "resilient-virtualmodel", all HTTP 500,
+# all served by primary-model, priority 1 (fallback-model) never reached
+# once. Confirmed via the proxy's own /config_dump that eviction was
+# genuinely active on the primary's endpoint the whole time (health score
+# near 0, consecutiveFailures counting up) - this is not a config mistake,
+# the CRD's own field docs describe exactly the promotion behavior that
+# does not happen. Traced into the controller source
+# (controller/pkg/agentgateway/translator/model_collections.go,
+# modelFailoverBackend): it compiles targets[] into the identical
+# api.AIBackend{ProviderGroups} structure 02's backend, and does carry the
+# eviction policy through - so the divergence is a real runtime behavior
+# difference between the two attachment paths, not a dropped field in
+# translation. The precise internal reason inside the Rust proxy's
+# selection code was not pinned down; this is reported as an observed,
+# reproduced fact, not a root-caused bug report.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: primary-model
+  namespace: default
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  match:
+    model: primary-model
+  visibility: Internal
+  provider: Custom
+  custom:
+    backendRef:
+      kind: Service
+      name: httpbun-primary-bad
+      port: 3090
+    formats:
+      - type: Completions
+        path: "/status/500"
+  policies:
+    health:
+      eviction:
+        consecutiveFailures: 1
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: fallback-model
+  namespace: default
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  match:
+    model: fallback-model
+  visibility: Internal
+  provider: Custom
+  custom:
+    backendRef:
+      kind: Service
+      name: httpbun
+      port: 3090
+    formats:
+      - type: Completions
+        path: "/llm/chat/completions"
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: resilient-virtualmodel
+  namespace: default
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  virtualModel:
+    failover:
+      targets:
+        - modelRef: {name: primary-model}
+          priority: 0
+        - modelRef: {name: fallback-model}
+          priority: 1

@@ -1,0 +1,29 @@
+# The moderation guard itself: a sibling guard-type key to B1's regex and
+# webhook, but more nested. Unlike those two, its own auth and timeout
+# policies live *inside* the openAIModeration entry, not as a second
+# AgentgatewayPolicy targeting a separate Service the way B1's webhook
+# timeout needed.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: moderation-guard
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: guarded-moderation
+  backend:
+    ai:
+      promptGuard:
+        request:
+        - openAIModeration:
+            model: omni-moderation-latest
+            policies:
+              auth:
+                secretRef:
+                  name: openai-secret
+              http:
+                requestTimeout: 5s
+          response:
+            message: "Content blocked by moderation policy"

@@ -1,0 +1,118 @@
+# Scenario 1: the keyless path. Every reader can finish this one with zero
+# provider credentials, because httpbun (an OpenAI-compatible mock backend)
+# echoes back whatever it receives instead of calling a real model.
+#
+# httpbun is configured as an "openai" provider, not "custom": agentgateway's
+# LLMProvider ExactlyOneOf only knows named providers plus host/port/path
+# overrides, there is no generic passthrough type. `path` on the provider
+# is a separate hop: it is where agentgateway forwards the request TO
+# (httpbun's real listening path), independent of what path the client used
+# to reach the Gateway.
+#
+# The HTTPRoute below still rewrites the client-facing path to
+# /v1/chat/completions before that, matching the same pattern Scenario 2 and
+# 3 use and the one the virtual-keys post (P1) already validated on a live
+# cluster: a friendly PathPrefix match, rewritten to the OpenAI-compatible
+# wire path every AgentgatewayBackend expects to receive. Confirmed from the
+# agentgateway docs' own two worked examples for a native OpenAI backend: one
+# skips matches/filters entirely and has the client call
+# /v1/chat/completions directly, the other matches a friendly prefix and
+# URLRewrites it to /v1/chat/completions. Kept consistent with the second
+# form here rather than mixed with the first.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbun
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbun
+  template:
+    metadata:
+      labels:
+        app: httpbun
+    spec:
+      containers:
+        - name: httpbun
+          # Pinned to the commit-hash tag that "latest" resolves to as of this
+          # validation pass (sharat87/httpbun ships no semver tags). Confirmed
+          # live: an untagged/`:latest` image defaults to imagePullPolicy
+          # Always, which keeps trying to re-pull even when the image is
+          # already on the node, and fails hard offline or through a
+          # container-unreachable proxy. See Gotchas in the post.
+          image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTPBUN_BIND
+              value: "0.0.0.0:3090"
+          ports:
+            - containerPort: 3090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbun
+  namespace: default
+spec:
+  selector:
+    app: httpbun
+  ports:
+    - port: 3090
+      targetPort: 3090
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: httpbun-llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4
+      host: httpbun.default.svc.cluster.local
+      port: 3090
+      path: "/llm/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httpbun-llm
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/httpbun
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: httpbun-llm
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

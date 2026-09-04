@@ -1,0 +1,86 @@
+# Gateway (same shape as A1-A4, with the AgentgatewayModel route kind
+# allowed like A3/A4) plus a real Ollama server, the first non-mocked
+# backend in this series. Ollama serves an OpenAI-compatible API at
+# /v1/chat/completions, exactly the shape AgentgatewayModel.spec.provider:
+# OpenAI expects. Two tiny CPU-only models are pulled at container start,
+# no GPU needed: smollm2:135m and qwen2.5:0.5b, both well under 1B
+# parameters so a kind node can run them comfortably.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+          - group: agentgateway.dev
+            kind: AgentgatewayModel
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.33.3
+          command: ["/bin/sh", "-c"]
+          # Starts the server, waits for it to accept connections, then
+          # pulls both models before the readiness probe can pass. Startup
+          # is slower than every other backend in this series (real model
+          # weights, not a mock), documented as a Gotcha in the post.
+          args:
+            - |
+              ollama serve &
+              until ollama list >/dev/null 2>&1; do sleep 1; done
+              ollama pull smollm2:135m
+              ollama pull qwen2.5:0.5b
+              wait
+          ports:
+            - containerPort: 11434
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "ollama list | grep -q smollm2 && ollama list | grep -q qwen2.5"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 120
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: default
+spec:
+  selector:
+    app: ollama
+  ports:
+    - port: 11434
+      targetPort: 11434

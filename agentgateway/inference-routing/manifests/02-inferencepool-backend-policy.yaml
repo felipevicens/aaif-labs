@@ -1,0 +1,75 @@
+# Scenario B: layer agentgateway's own LLM policies on top of Inference
+# Extension's endpoint selection. Scenario A (the bare quickstart) routes
+# straight from an HTTPRoute to the InferencePool the llm-d Router Gateway
+# chart created; that gets you GPU-aware endpoint selection but none of
+# agentgateway's own token accounting or rate limiting, since the request
+# never passes through an AgentgatewayBackend. This file routes through an
+# AgentgatewayBackend with a "custom" provider whose backendRef points at
+# the same InferencePool instead, so agentgateway can still parse the LLM
+# response and enforce a token budget while the InferencePool/EPP still
+# pick the actual pod. This HTTPRoute reuses the same name
+# (vllm-qwen3-32b) the router chart would otherwise create automatically -
+# apply this only after re-running the chart install with
+# --set httpRoute.create=false (see 00-cluster-and-install.md step 6),
+# or the two objects collide.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: qwen-inferencepool
+  namespace: default
+spec:
+  ai:
+    provider:
+      custom:
+        backendRef:
+          group: inference.networking.k8s.io
+          kind: InferencePool
+          name: vllm-qwen3-32b
+        model: Qwen/Qwen3-32B
+        formats:
+          - type: Completions
+            path: /v1/chat/completions
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vllm-qwen3-32b
+  namespace: default
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: qwen-inferencepool
+      timeouts:
+        request: 300s
+---
+# 100 tokens/minute is deliberately tiny so the budget trips within two
+# requests instead of requiring a minute of traffic to prove. Token counts
+# are only known once a response completes (see the field's own doc
+# comment), so the first request always goes through; it's the *next* one
+# that sees the accumulated usage and gets a 429.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: qwen-token-budget
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: vllm-qwen3-32b
+  traffic:
+    rateLimit:
+      local:
+        - tokens: 100
+          unit: Minutes

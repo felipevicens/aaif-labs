@@ -1,0 +1,117 @@
+# Scenario 3, the core of this post: ONE AgentgatewayBackend that actually
+# spans multiple providers, using spec.ai.groups instead of spec.ai.provider.
+# Scenarios 1 and 2 each pinned one backend to one provider (AIBackend's
+# `provider` arm); this one uses the other arm of that ExactlyOneOf, `groups`
+# (PriorityGroup, max 8, each holding up to 16 NamedLLMProvider entries),
+# which is the real multi-provider mechanism in the stable API.
+#
+# Order of the groups below IS the priority, confirmed literally in the CRD
+# reference: "Groups in priority order, where each group defines a set of
+# LLM providers. The priority determines the priority of the backend
+# endpoints chosen." agentgateway tries group 0 first and falls through to
+# the next group on failure. (VirtualModel.failover.targets in 05-* instead
+# carries an explicit `priority` int per target; a different mechanism at a
+# different layer, not a contradiction.)
+#
+# Each provider entry below is flat (name + policies + the provider-type key
+# directly, no nested `provider:` wrapper) — confirmed against the CRD's own
+# NamedLLMProvider field table and its worked example for AIBackend.groups.
+#
+# - group 0: OpenAI (real, gpt-4o-mini) as the primary. NOT gpt-5-nano, even
+#   though it is the cheaper tier: confirmed live that gpt-5-nano rejects the
+#   `max_tokens` param (wants `max_completion_tokens`) and, worse, spends its
+#   whole completion budget on invisible reasoning tokens before writing
+#   anything visible (empty content, finish_reason: length, even at
+#   max_completion_tokens: 64). That breaks the "one shared request body
+#   works everywhere" premise this post is built on. See Gotchas.
+# - group 1: Gemini (real, free tier, gemini-3.5-flash-lite). The model
+#   originally in this file, gemini-1.5-flash, 404s as of this validation
+#   pass: "is not found for API version v1beta". gemini-2.5-flash-lite also
+#   404s: "no longer available to new users". Confirmed live against
+#   generativelanguage.googleapis.com that gemini-3.5-flash-lite responds.
+# - group 2: httpbun (keyless) as the last-resort fallback, so the backend
+#   still answers something even with no working provider credentials.
+#
+# Needs both OPENAI_API_KEY and GEMINI_API_KEY:
+#   export OPENAI_API_KEY="sk-..." GEMINI_API_KEY="..."
+#   envsubst < 03-multiprovider-priority-groups.yaml | kubectl apply -f -
+# No envsubst? Same YAML works as a `cat <<EOF | kubectl apply -f -` heredoc.
+#
+# Reuses the openai-credentials Secret from 02-openai-secret-and-backend.yaml
+# (same namespace, same name) instead of redefining it.
+#
+# One HTTPRoute serves all three providers behind this single backend, so its
+# URLRewrite below normalizes the client-facing path to /v1/chat/completions
+# once, at the Gateway API layer, for whichever provider ends up answering.
+# The fallback-httpbun entry keeps its own literal `path` override (same as
+# Scenario 1): that is a second, independent hop, from agentgateway to
+# httpbun's real listening endpoint, and it does not conflict with the
+# route-level rewrite above it, which only concerns the client-to-Gateway
+# leg. Still worth a live-cluster smoke test before publishing, same as
+# every scenario in this lab.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gemini-credentials
+  namespace: agentgateway-system
+type: Opaque
+stringData:
+  Authorization: "${GEMINI_API_KEY}"
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: multi-provider-llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    groups:
+      - providers:
+          - name: primary-openai
+            openai:
+              model: gpt-4o-mini
+            policies:
+              auth:
+                secretRef:
+                  name: openai-credentials
+      - providers:
+          - name: fallback-gemini
+            gemini:
+              model: gemini-3.5-flash-lite
+            policies:
+              auth:
+                secretRef:
+                  name: gemini-credentials
+      - providers:
+          - name: fallback-httpbun
+            openai:
+              model: gpt-4
+            host: httpbun.default.svc.cluster.local
+            port: 3090
+            path: "/llm/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: multi-provider-llm
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/multi
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: multi-provider-llm
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

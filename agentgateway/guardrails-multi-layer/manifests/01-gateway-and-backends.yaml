@@ -1,0 +1,224 @@
+# Gateway (same shape as the rest of this series) plus two mocked LLM
+# backends. httpbun answers Scenario A (a fixed, non-configurable mock
+# completion, same role it plays in A1-A3): fine there, because Scenario A
+# never needs the completion's own content to matter, only whether the
+# request reaches it at all. Scenario B does need the completion's content
+# to matter (a credit-card-shaped string for the response-side Mask guard
+# to redact), which httpbun's fixed mock can't provide, so it gets its own
+# tiny lab-owned mock server instead (02-guardrail-webhook.yaml has the
+# other one, the webhook itself).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbun
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbun
+  template:
+    metadata:
+      labels:
+        app: httpbun
+    spec:
+      containers:
+        - name: httpbun
+          image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTPBUN_BIND
+              value: "0.0.0.0:3090"
+          ports:
+            - containerPort: 3090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbun
+  namespace: default
+spec:
+  selector:
+    app: httpbun
+  ports:
+    - port: 3090
+      targetPort: 3090
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-completions-script
+  namespace: default
+data:
+  server.py: |
+    import json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    CARD = "4111 1111 1111 1111"
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get('Content-Length', 0))
+            self.rfile.read(length)
+            body = {
+                "model": "gpt-4",
+                "usage": {"prompt_tokens": 12, "completion_tokens": 24, "total_tokens": 36},
+                "choices": [{
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": "Sure, here is a test card number you can use: " + CARD + ". Let me know if you need anything else.",
+                    },
+                }],
+                "id": "chatcmpl-mock0000000000000000001",
+                "object": "chat.completion",
+                "created": 1788500000,
+            }
+            payload = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, fmt, *args):
+            pass
+
+    HTTPServer(('0.0.0.0', 8080), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-completions
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-completions
+  template:
+    metadata:
+      labels:
+        app: mock-completions
+    spec:
+      containers:
+        - name: mock-completions
+          image: python:3.12-alpine
+          command: ["python3", "/app/server.py"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: mock-completions-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-completions
+  namespace: default
+spec:
+  selector:
+    app: mock-completions
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: guarded-llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4
+      host: httpbun.default.svc.cluster.local
+      port: 3090
+      path: "/llm/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: guarded-llm
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/guarded
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: guarded-llm
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: guarded-llm-cc
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4
+      host: mock-completions.default.svc.cluster.local
+      port: 8080
+      path: "/v1/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: guarded-llm-cc
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /llm/guarded-cc
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: guarded-llm-cc
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

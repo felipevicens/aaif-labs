@@ -1,0 +1,91 @@
+# The gotcha this post is built to test. virtualModel.failover (A2's whole
+# post) explicitly skips a target once it's evicted: "the next priority is
+# used only when every target at this priority is degraded." conditional's
+# own docs describe something structurally different: "the first CEL
+# expression that evaluates to true" - health is never mentioned as an
+# input to that decision at all. If that's accurate, a target whose when
+# still matches gets called even after policies.health.eviction has marked
+# it unhealthy: conditional has no failover-style skip-if-degraded logic to
+# begin with, so there's nothing for eviction to short-circuit.
+#
+# broken-tier reuses A2's proven fault: httpbun-broken's /status/500, a
+# real HTTP 500 every time, with consecutiveFailures: 1 so a single failure
+# is enough to evict it. healthy-tier is the same shared httpbun the other
+# scenarios use. routed-broken's when always selects broken-tier - there's
+# no request-content reason to fail over here, the point is to watch what
+# conditional does when its own chosen target is already known-bad.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: broken-tier
+  namespace: default
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  match:
+    model: broken-tier
+  visibility: Internal
+  provider: Custom
+  custom:
+    backendRef:
+      kind: Service
+      name: httpbun-broken
+      port: 3090
+    formats:
+      - type: Completions
+        path: "/status/500"
+  policies:
+    health:
+      eviction:
+        consecutiveFailures: 1
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: healthy-tier
+  namespace: default
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  match:
+    model: healthy-tier
+  visibility: Internal
+  provider: Custom
+  custom:
+    backendRef:
+      kind: Service
+      name: httpbun
+      port: 3090
+    formats:
+      - type: Completions
+        path: "/llm/chat/completions"
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: routed-broken
+  namespace: default
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: http
+  match:
+    model: routed-broken
+  visibility: Public
+  virtualModel:
+    conditional:
+      targets:
+        - when: 'json(request.body).force_primary == true'
+          modelRef: {name: broken-tier}
+        - modelRef: {name: healthy-tier}

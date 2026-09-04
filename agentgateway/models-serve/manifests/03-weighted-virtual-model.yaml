@@ -1,0 +1,65 @@
+# Scenario B: virtualModel.weighted, the one virtual-model strategy A2
+# (failover) and A3 (conditional) didn't already cover. Two Internal
+# targets, each a real local model reached through the same Ollama
+# backend, each rewriting the model field to its own real tag so the
+# response proves which one actually answered. A public virtual model,
+# gpt-4-turbo, splits traffic across them 70/30 with no client-visible
+# difference from calling a single named model.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: internal-smollm2
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      sectionName: http
+  visibility: Internal
+  provider: OpenAI
+  baseURL: http://ollama.default.svc.cluster.local:11434/v1
+  policies:
+    transformations:
+      - field: model
+        expression: '"smollm2:135m"'
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: internal-qwen
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      sectionName: http
+  visibility: Internal
+  provider: OpenAI
+  baseURL: http://ollama.default.svc.cluster.local:11434/v1
+  policies:
+    transformations:
+      - field: model
+        expression: '"qwen2.5:0.5b"'
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayModel
+metadata:
+  name: gpt-4-turbo
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+      sectionName: http
+  virtualModel:
+    weighted:
+      targets:
+        - modelRef:
+            name: internal-smollm2
+          weight: 70
+        - modelRef:
+            name: internal-qwen
+          weight: 30
