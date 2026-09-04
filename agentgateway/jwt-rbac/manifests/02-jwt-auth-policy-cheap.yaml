@@ -1,0 +1,37 @@
+# Gates the cheap-model route: any request needs a JWT signed by our local
+# test issuer (mode: Strict), then the CEL authorization rule below only
+# lets it through if the token carries the "engineer" or "admin" role.
+# jwtAuthentication is repeated identically on both route policies rather
+# than attached once at the Gateway level, so each route's authorization
+# rule is unambiguous about what governs it — see PLAN.md's F1 research
+# note on why this wasn't assumed to compose automatically.
+#
+# ${JWKS_INLINE} is substituted by scripts/setup.sh with the JWK Set JSON
+# for the keypair it just generated — there's no real IdP here, the
+# "issuer" is just a label the minted tokens carry and this policy checks
+# against, and the public key that verifies them ships inline in this
+# policy instead of being fetched from anywhere.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: jwt-rbac-cheap-model
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: cheap-model
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: "https://jwt-rbac.aaif-labs.local/"
+          audiences:
+            - "jwt-rbac-demo"
+          jwks:
+            inline: '${JWKS_INLINE}'
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+          - 'has(jwt.roles) && ("engineer" in jwt.roles || "admin" in jwt.roles)'

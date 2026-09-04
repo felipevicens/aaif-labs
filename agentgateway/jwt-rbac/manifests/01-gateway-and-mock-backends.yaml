@@ -1,0 +1,207 @@
+# Two named models behind one Gateway: `cheap-model` and `expensive-model`.
+# Both point at the same mock server (it doesn't care which "model" name
+# it was called as, it just echoes it back), but each gets its own
+# AgentgatewayBackend + HTTPRoute pair so a different AgentgatewayPolicy
+# can be attached per route. That's the whole mechanism this lab
+# demonstrates: JWT authentication is identical for both, but the CEL
+# authorization rule attached to each route decides who reaches which
+# model, keyed on a role claim inside the validated token.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jwt-rbac
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-llm-script
+  namespace: jwt-rbac
+data:
+  main.py: |
+    import json
+    import time
+    import uuid
+
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+
+    def last_user_text(messages):
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts = [p.get("text", "") for p in content if isinstance(p, dict)]
+                return " ".join(parts)
+        return ""
+
+
+    async def chat_completions(request):
+        body = await request.json()
+        user_text = last_user_text(body.get("messages", []))
+        model = body.get("model") or "unknown-model"
+        reply = f"Hello from {model}! You said: {user_text!r}"
+        completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+
+        return JSONResponse(
+            {
+                "id": completion_id,
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": reply}, "finish_reason": "stop"}
+                ],
+                "usage": {
+                    "prompt_tokens": len(user_text.split()),
+                    "completion_tokens": len(reply.split()),
+                    "total_tokens": len(user_text.split()) + len(reply.split()),
+                },
+            }
+        )
+
+
+    app = Starlette(routes=[Route("/v1/chat/completions", chat_completions, methods=["POST"])])
+
+    if __name__ == "__main__":
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-llm
+  namespace: jwt-rbac
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-llm
+  template:
+    metadata:
+      labels:
+        app: mock-llm
+    spec:
+      containers:
+        - name: mock-llm
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - pip install --quiet starlette uvicorn && python3 /app/main.py
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: mock-llm-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-llm
+  namespace: jwt-rbac
+spec:
+  selector:
+    app: mock-llm
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+# host/port/path override the same way A1's and E2's mock scenarios do:
+# the "openai" provider type keeps the wire shape OpenAI-compatible, but
+# `model` picks which name this backend answers as.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: cheap-model
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: cheap-model
+      host: mock-llm.jwt-rbac.svc.cluster.local
+      port: 8000
+      path: "/v1/chat/completions"
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: expensive-model
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: expensive-model
+      host: mock-llm.jwt-rbac.svc.cluster.local
+      port: 8000
+      path: "/v1/chat/completions"
+---
+# Client-facing paths are just distinct prefixes so a curl call makes it
+# obvious which model it's asking for. The AgentgatewayBackend's own
+# `path` override controls what actually reaches the mock, so no
+# URLRewrite filter is needed here.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cheap-model
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /models/cheap-model
+      backendRefs:
+        - name: cheap-model
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: expensive-model
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /models/expensive-model
+      backendRefs:
+        - name: expensive-model
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
