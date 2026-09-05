@@ -1,0 +1,85 @@
+# Baseline for the tracing demo: a plain HTTP route (httpbun's own /get)
+# alongside an LLM-shaped route (Scenario 2's manifest), so the post can
+# show one trace with only the default HTTP span attributes and one trace
+# with the extra gen_ai.* attributes agentgateway adds for LLM traffic,
+# from the same gateway, same backend pod, same request pipeline.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: request-tracing
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbun
+  namespace: request-tracing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbun
+  template:
+    metadata:
+      labels:
+        app: httpbun
+    spec:
+      containers:
+        - name: httpbun
+          image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTPBUN_BIND
+              value: "0.0.0.0:3090"
+          ports:
+            - containerPort: 3090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbun
+  namespace: request-tracing
+spec:
+  selector:
+    app: httpbun
+  ports:
+    - port: 3090
+      targetPort: 3090
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: good-route
+  namespace: request-tracing
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /good
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /get
+      backendRefs:
+        - name: httpbun
+          port: 3090

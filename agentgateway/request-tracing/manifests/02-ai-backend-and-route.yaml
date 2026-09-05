@@ -1,0 +1,43 @@
+# The LLM-shaped side of the demo: httpbun mocked as an OpenAI-compatible
+# backend, same pattern this series has used since the multi-provider lab
+# (A2). The point isn't the model response, it's that a request through an
+# AgentgatewayBackend/AIBackend route gets extra gen_ai.* span attributes
+# that the plain /good route in 01-namespace-and-backend.yaml never does.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: httpbun-llm
+  namespace: request-tracing
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4
+      host: httpbun.request-tracing.svc.cluster.local
+      port: 3090
+      path: "/llm/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: chat-route
+  namespace: request-tracing
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /chat
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: httpbun-llm
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
