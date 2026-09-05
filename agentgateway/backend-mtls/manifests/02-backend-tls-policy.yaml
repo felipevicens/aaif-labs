@@ -1,0 +1,23 @@
+# Standard Gateway API resource, not agentgateway-specific. This is the
+# one-way half: it tells agentgateway to trust `tls-backend`'s server
+# certificate only if it chains to the CA in the `backend-ca` ConfigMap
+# and its SAN matches `validation.hostname`. On its own this gets you an
+# encrypted, server-verified connection — it does NOT make agentgateway
+# present a client certificate. That's `AgentgatewayPolicy.spec.backend.tls`
+# in 03-mtls-policy.yaml.
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: tls-backend
+  namespace: backend-mtls
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: tls-backend
+  validation:
+    hostname: "mtls-backend.internal"
+    caCertificateRefs:
+      - group: ""
+        kind: ConfigMap
+        name: backend-ca

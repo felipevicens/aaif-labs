@@ -1,0 +1,175 @@
+# Namespace, the plain-HTTP httpbun echo backend, and the nginx TLS
+# frontend that terminates HTTPS and requires a client certificate
+# (`ssl_verify_client on`) before proxying to httpbun. agentgateway talks
+# to the Service named `tls-backend`, not to httpbun directly — nginx is
+# what makes this a TLS/mTLS backend at all, since httpbun itself only
+# speaks plain HTTP.
+#
+# nginx forwards the TLS variables nginx itself computed
+# ($ssl_client_verify, $ssl_client_s_dn) as headers, and httpbun's
+# /headers endpoint echoes whatever it received — so the response tells
+# you, in plain text, whether agentgateway's client certificate was
+# actually verified on the wire, not just that the request succeeded.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backend-mtls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbun
+  namespace: backend-mtls
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbun
+  template:
+    metadata:
+      labels:
+        app: httpbun
+    spec:
+      containers:
+        - name: httpbun
+          image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbun
+  namespace: backend-mtls
+spec:
+  selector:
+    app: httpbun
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tls-backend-nginx-conf
+  namespace: backend-mtls
+data:
+  nginx.conf: |
+    events {}
+    http {
+      server {
+        listen              443 ssl;
+        server_name         mtls-backend.internal;
+        ssl_certificate      /etc/nginx/certs/tls.crt;
+        ssl_certificate_key  /etc/nginx/certs/tls.key;
+        ssl_client_certificate /etc/nginx/ca/ca.crt;
+        ssl_verify_client   on;
+        location / {
+          proxy_pass http://httpbun.backend-mtls.svc.cluster.local:80;
+          proxy_set_header Host $host;
+          proxy_set_header X-Ssl-Client-Verify $ssl_client_verify;
+          proxy_set_header X-Ssl-Client-Dn $ssl_client_s_dn;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tls-backend
+  namespace: backend-mtls
+  labels:
+    app: tls-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tls-backend
+  template:
+    metadata:
+      labels:
+        app: tls-backend
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 443
+              name: https-web-svc
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+            - name: server-cert
+              mountPath: /etc/nginx/certs
+              readOnly: true
+            - name: client-ca
+              mountPath: /etc/nginx/ca
+              readOnly: true
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: tls-backend-nginx-conf
+        - name: server-cert
+          secret:
+            secretName: tls-backend-server-tls
+        - name: client-ca
+          configMap:
+            name: backend-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tls-backend
+  namespace: backend-mtls
+  labels:
+    app: tls-backend
+spec:
+  selector:
+    app: tls-backend
+  ports:
+    - protocol: TCP
+      port: 8443
+      targetPort: https-web-svc
+      name: https
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mtls-backend
+  namespace: backend-mtls
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  hostnames:
+    - "mtls-backend.internal"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mtls
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /headers
+      backendRefs:
+        - name: tls-backend
+          port: 8443

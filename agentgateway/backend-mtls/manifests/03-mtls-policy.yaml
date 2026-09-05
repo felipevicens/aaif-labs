@@ -1,0 +1,33 @@
+# The agentgateway-specific half: this is what actually makes the
+# connection mutual. `mtlsCertificateRef` points at a Secret holding
+# `tls.crt`/`tls.key` (a regular `kubernetes.io/tls` Secret) that
+# agentgateway presents as its own client identity during the TLS
+# handshake with `tls-backend`. `sni` pins the SNI value sent in that
+# handshake, matching the CN/SAN nginx's server certificate was issued
+# for.
+#
+# Confirmed live: once an AgentgatewayPolicy carrying `backend.tls` is
+# attached to a target, it replaces the BackendTLSPolicy's server-cert
+# verification for that same target rather than layering on top of it —
+# with no `caCertificateRefs` here, agentgateway fell back to the
+# system trust store and rejected nginx's self-signed cert as
+# `UnknownIssuer`, even with 02-backend-tls-policy.yaml still applied.
+# So the CA has to be repeated here too.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: tls-backend-mtls
+  namespace: backend-mtls
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: tls-backend
+  backend:
+    tls:
+      mtlsCertificateRef:
+        - name: gateway-client-tls
+      caCertificateRefs:
+        - kind: ConfigMap
+          name: backend-ca
+      sni: mtls-backend.internal
