@@ -1,0 +1,22 @@
+# Scenario 2: the layer this lab actually exists to demonstrate. This
+# AgentgatewayPolicy targets a Service that DOES exist (httpbun), so it
+# passes Kubernetes admission and controller reconciliation cleanly - the
+# resource itself never shows an error. Its `unhealthyCondition` is a
+# syntactically broken CEL expression. Live-tested behavior (agentgateway
+# v1.5.0), replaces the default good value below to reproduce the gotcha:
+#   unhealthyCondition: "response.code =="
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: httpbun-broken-health
+  namespace: alerting-signals
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: httpbun
+  backend:
+    health:
+      unhealthyCondition: "response.code =="
+      eviction:
+        consecutiveFailures: 1
