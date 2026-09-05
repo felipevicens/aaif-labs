@@ -1,0 +1,31 @@
+# Helm values for open-telemetry/opentelemetry-collector, installed by
+# setup.sh. This is the piece agentgateway itself can't be: something
+# that injects a header before forwarding OTLP data on. The
+# otlphttp/fake_vendor exporter adds the header Honeycomb's
+# x-honeycomb-team or Grafana Cloud's Authorization would need in real
+# life; fake-vendor (02-fake-vendor.yaml) stands in for the real SaaS
+# endpoint and proves whether that header actually arrived.
+mode: deployment
+image:
+  repository: otel/opentelemetry-collector-contrib
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+  exporters:
+    debug:
+      verbosity: detailed
+    otlphttp/fake_vendor:
+      traces_endpoint: http://fake-vendor.trace-export.svc.cluster.local:8000/ingest
+      headers:
+        x-fake-vendor-key: "demo-not-real-01"
+      tls:
+        insecure: true
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [batch]
+        exporters: [debug, otlphttp/fake_vendor]

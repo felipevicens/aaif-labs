@@ -1,0 +1,23 @@
+# Scenario 2: agentgateway -> OTel Collector -> fake-vendor. Same
+# AgentgatewayPolicy shape as 03, only the backendRef changes. This is
+# the pattern Honeycomb and Grafana Cloud both require in real life,
+# because their OTLP endpoints need a header agentgateway's tracing
+# policy has no field for.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: tracing
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - kind: Gateway
+      name: agentgateway-proxy
+      group: gateway.networking.k8s.io
+  frontend:
+    tracing:
+      backendRef:
+        name: opentelemetry-collector
+        namespace: tracing
+        port: 4317
+      protocol: GRPC
+      randomSampling: "true"

@@ -1,0 +1,23 @@
+# Scenario 1: agentgateway -> Tempo directly, no collector in front.
+# This is structurally the same shape as pointing at a Datadog Agent (the
+# Agent handles auth once at its own install time via a Secret-backed API
+# key, not per-request) or at Jaeger: anything that accepts anonymous
+# OTLP on its own network needs nothing more than this.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: tracing
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - kind: Gateway
+      name: agentgateway-proxy
+      group: gateway.networking.k8s.io
+  frontend:
+    tracing:
+      backendRef:
+        name: tempo
+        namespace: telemetry
+        port: 4317
+      protocol: GRPC
+      randomSampling: "true"

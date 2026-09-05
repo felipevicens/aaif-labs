@@ -1,0 +1,75 @@
+# Stands in for a SaaS trace backend that requires a per-request auth
+# header (Honeycomb's x-honeycomb-team, Grafana Cloud's Authorization).
+# Same technique as the guardrails-webhook lab's Python inline server:
+# it prints every received header name to stdout, so validation can
+# confirm directly whether the header the real vendor would require
+# actually arrived, without needing a real account anywhere.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fake-vendor-script
+  namespace: trace-export
+data:
+  server.py: |
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get('Content-Length', 0))
+            self.rfile.read(length)
+            has_key = 'x-fake-vendor-key' in [h.lower() for h in self.headers.keys()]
+            print(
+                self.path + " headers=" + ",".join(sorted(self.headers.keys()))
+                + " x-fake-vendor-key-present=" + str(has_key),
+                flush=True,
+            )
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"accepted":true}')
+
+        def log_message(self, fmt, *args):
+            pass
+
+    HTTPServer(('0.0.0.0', 8000), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-vendor
+  namespace: trace-export
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fake-vendor
+  template:
+    metadata:
+      labels:
+        app: fake-vendor
+    spec:
+      containers:
+        - name: fake-vendor
+          image: python:3.12-alpine
+          command: ["python3", "/app/server.py"]
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: fake-vendor-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fake-vendor
+  namespace: trace-export
+spec:
+  selector:
+    app: fake-vendor
+  ports:
+    - port: 8000
+      targetPort: 8000
