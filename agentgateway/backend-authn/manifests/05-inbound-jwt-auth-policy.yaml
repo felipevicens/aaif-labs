@@ -1,0 +1,26 @@
+# Client-facing side of Scenario 2: validates the token curl brings in
+# (issued by Keycloak's inbound-client, aud=requester-client). This is
+# what makes `jwt.rawToken` available in the CEL context for the
+# backend-auth policy's subjectToken source in 07-token-exchange-policy.yaml
+# — without a jwtAuthentication policy on the route there is no validated
+# `jwt.*` to read at all.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: exchange-inbound-jwt-auth
+  namespace: backend-authn
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: exchange-echo
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: http://keycloak.backend-authn.svc.cluster.local:8080/realms/backend-oauth
+          audiences:
+            - requester-client
+          jwks:
+            remote:
+              url: http://keycloak.backend-authn.svc.cluster.local:8080/realms/backend-oauth/protocol/openid-connect/certs

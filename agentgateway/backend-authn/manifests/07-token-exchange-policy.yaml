@@ -1,0 +1,45 @@
+# Scenario 2: oauthTokenExchange. agentgateway takes the inbound JWT
+# validated by 05-inbound-jwt-auth-policy.yaml (aud=requester-client),
+# authenticates itself to Keycloak's token endpoint as requester-client,
+# and exchanges it (RFC 8693) for a new token scoped to target-client
+# before forwarding the request to httpbun.
+#
+# `jwt.rawToken.unredacted()` is required, not `jwt.rawToken`: the
+# jwtAuthentication policy above strips the validated credential from the
+# request by default before any later policy runs, so this reads the
+# pre-redaction copy explicitly. Confirmed from agentgateway's own docs
+# (docs/kubernetes/latest/documentation/security/backend-authn/), not
+# guessed.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: backend-oauth-exchange
+  namespace: backend-authn
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: exchange-echo
+  backend:
+    auth:
+      oauthTokenExchange:
+        backendRef:
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: keycloak-token-endpoint
+        path: /realms/backend-oauth/protocol/openid-connect/token
+        grantType: TokenExchange
+        audiences:
+          - target-client
+        subjectToken:
+          source:
+            expression: jwt.rawToken.unredacted()
+        clientAuth:
+          clientId: requester-client
+          method: ClientSecretBasic
+          secretRef:
+            name: oauth-client-secret
+            # secretRef defaults to a key literally named `clientSecret`;
+            # our Secret (like every other secret in this lab) uses `secret`
+            # for consistency, so the key must be named explicitly here.
+            key: secret

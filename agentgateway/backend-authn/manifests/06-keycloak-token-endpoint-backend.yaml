@@ -1,0 +1,12 @@
+# The `AgentgatewayBackend` that 07-token-exchange-policy.yaml's
+# `oauthTokenExchange.backendRef` points at: just a static reference to
+# Keycloak's own Service, same pattern the docs use.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: keycloak-token-endpoint
+  namespace: backend-authn
+spec:
+  static:
+    host: keycloak.backend-authn.svc.cluster.local
+    port: 8080

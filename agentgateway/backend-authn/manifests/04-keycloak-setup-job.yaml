@@ -1,0 +1,146 @@
+# One-shot Job that configures a dedicated `backend-oauth` realm via
+# kcadm.sh once Keycloak is ready. Mirrors the client shape confirmed
+# against agentgateway's own proven example realm-import
+# (github.com/agentgateway/agentgateway/blob/main/examples/traffic-token-exchange/oauth-rfc8693/backend-oauth-realm.json),
+# built imperatively instead of importing that JSON directly, same
+# convention D5 already established for this series:
+#
+#   inbound-client   - what curl authenticates as to get a starting token
+#                       (aud=requester-client, via the requester-audience
+#                       client scope)
+#   requester-client  - what agentgateway itself authenticates as when it
+#                       calls Keycloak's token endpoint to exchange the
+#                       inbound token. `standard.token.exchange.enabled`
+#                       is the client attribute that actually turns on
+#                       RFC 8693 exchange for this client (a Keycloak
+#                       26.x preview feature, see 03-keycloak.yaml).
+#   target-client     - represents the backend resource; the exchanged
+#                       token's `aud` claim ends up as this client's ID,
+#                       via the target-audience client scope assigned to
+#                       requester-client's default scopes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-setup-script
+  namespace: backend-authn
+data:
+  setup.sh: |
+    set -euo pipefail
+
+    KC="/opt/keycloak/bin/kcadm.sh"
+    SERVER="http://keycloak.backend-authn.svc.cluster.local:8080"
+
+    echo "Waiting for Keycloak to accept admin login..."
+    for i in $(seq 1 40); do
+      if $KC config credentials --server "$SERVER" --realm master \
+           --user admin --password admin >/tmp/kcadm.log 2>&1; then
+        break
+      fi
+      sleep 3
+    done
+    cat /tmp/kcadm.log || true
+
+    echo "Creating backend-oauth realm..."
+    $KC create realms -s realm=backend-oauth -s enabled=true
+
+    echo "Creating target-audience client-scope (aud=target-client)..."
+    TARGET_SCOPE_ID=$($KC create client-scopes -r backend-oauth \
+      -s name=target-audience -s protocol=openid-connect \
+      -s 'attributes."include.in.token.scope"=true' -i)
+    $KC create client-scopes/"$TARGET_SCOPE_ID"/protocol-mappers/models -r backend-oauth \
+      -s name=target-audience-mapper -s protocol=openid-connect \
+      -s protocolMapper=oidc-audience-mapper \
+      -s 'config."included.custom.audience"=target-client' \
+      -s 'config."access.token.claim"=true' \
+      -s 'config."id.token.claim"=false'
+
+    echo "Creating requester-audience client-scope (aud=requester-client)..."
+    REQUESTER_SCOPE_ID=$($KC create client-scopes -r backend-oauth \
+      -s name=requester-audience -s protocol=openid-connect \
+      -s 'attributes."include.in.token.scope"=true' -i)
+    $KC create client-scopes/"$REQUESTER_SCOPE_ID"/protocol-mappers/models -r backend-oauth \
+      -s name=requester-audience-mapper -s protocol=openid-connect \
+      -s protocolMapper=oidc-audience-mapper \
+      -s 'config."included.custom.audience"=requester-client' \
+      -s 'config."access.token.claim"=true' \
+      -s 'config."id.token.claim"=false'
+
+    echo "Creating target-client (all flows disabled, resource only)..."
+    $KC create clients -r backend-oauth \
+      -s clientId=target-client -s publicClient=false \
+      -s secret="$TARGET_CLIENT_SECRET" \
+      -s standardFlowEnabled=false -s directAccessGrantsEnabled=false \
+      -s serviceAccountsEnabled=false
+
+    echo "Creating requester-client (performs the token exchange)..."
+    REQUESTER_CLIENT_ID=$($KC create clients -r backend-oauth \
+      -s clientId=requester-client -s publicClient=false \
+      -s secret="$REQUESTER_CLIENT_SECRET" \
+      -s standardFlowEnabled=false -s directAccessGrantsEnabled=false \
+      -s serviceAccountsEnabled=true \
+      -s 'attributes."standard.token.exchange.enabled"=true' -i)
+    $KC update clients/"$REQUESTER_CLIENT_ID"/default-client-scopes/"$TARGET_SCOPE_ID" -r backend-oauth
+
+    echo "Creating inbound-client (what curl authenticates as)..."
+    INBOUND_CLIENT_ID=$($KC create clients -r backend-oauth \
+      -s clientId=inbound-client -s publicClient=false \
+      -s secret="$INBOUND_CLIENT_SECRET" \
+      -s standardFlowEnabled=false -s directAccessGrantsEnabled=true \
+      -s serviceAccountsEnabled=false -i)
+    $KC update clients/"$INBOUND_CLIENT_ID"/default-client-scopes/"$REQUESTER_SCOPE_ID" -r backend-oauth
+
+    echo "Creating test user..."
+    # email/firstName/lastName are required by this realm's default user
+    # profile config (`required.roles: [user]`); leaving them unset doesn't
+    # show up in the user's own `requiredActions` list, but Keycloak
+    # recomputes profile validity on every login and silently injects a
+    # VERIFY_PROFILE action, which direct-grant rejects as "Account is not
+    # fully set up" instead of a normal auth failure.
+    $KC create users -r backend-oauth -s username=testuser -s enabled=true \
+      -s email=testuser@example.com -s emailVerified=true \
+      -s firstName=Test -s lastName=User -i >/dev/null
+    $KC set-password -r backend-oauth --username testuser --new-password testpass
+
+    echo "Keycloak setup complete."
+    echo "issuer=$SERVER/realms/backend-oauth"
+    echo "jwks=$SERVER/realms/backend-oauth/protocol/openid-connect/certs"
+    echo "token_endpoint=$SERVER/realms/backend-oauth/protocol/openid-connect/token"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-setup
+  namespace: backend-authn
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: keycloak-setup
+          image: quay.io/keycloak/keycloak:26.7.1
+          command: ["/bin/bash", "/scripts/setup.sh"]
+          env:
+            - name: TARGET_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: target-client-secret
+                  key: secret
+            - name: REQUESTER_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oauth-client-secret
+                  key: secret
+            - name: INBOUND_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: inbound-client-secret
+                  key: secret
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: keycloak-setup-script
+            defaultMode: 0755

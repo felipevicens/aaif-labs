@@ -1,0 +1,110 @@
+# Gateway plus one httpbun Deployment/Service, reused across both
+# scenarios in this lab. httpbun's /headers endpoint echoes back whatever
+# it received, including the Authorization header agentgateway attaches
+# after backend-auth runs, so it works as an inspection point for both
+# jwtSign and oauthTokenExchange without needing a custom mock server.
+#
+# Two separate HTTPRoutes, one per scenario, so each gets its own
+# AgentgatewayPolicy: `spec.backend.auth` targets an HTTPRoute (or a
+# Service) directly, no AgentgatewayBackend abstraction needed for a
+# plain HTTP passthrough backend like this one.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backend-authn
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbun
+  namespace: backend-authn
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbun
+  template:
+    metadata:
+      labels:
+        app: httpbun
+    spec:
+      containers:
+        - name: httpbun
+          image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbun
+  namespace: backend-authn
+spec:
+  selector:
+    app: httpbun
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: jwtsign-echo
+  namespace: backend-authn
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /jwtsign
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /headers
+      backendRefs:
+        - name: httpbun
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: exchange-echo
+  namespace: backend-authn
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /exchange
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /headers
+      backendRefs:
+        - name: httpbun
+          port: 80

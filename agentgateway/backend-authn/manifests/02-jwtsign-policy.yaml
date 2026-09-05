@@ -1,0 +1,27 @@
+# Scenario 1: jwtSign. agentgateway mints a fresh, signed JWT for every
+# request that reaches httpbun on this route, using the private key in
+# Secret `jwt-signing-key` (created imperatively by setup.sh from a
+# throwaway EC keypair, never committed). No external IdP involved: the
+# client sends nothing, agentgateway signs and attaches the token itself.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: backend-jwt-sign
+  namespace: backend-authn
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: jwtsign-echo
+  backend:
+    auth:
+      jwtSign:
+        signingKeyRef:
+          name: jwt-signing-key
+        alg: ES256
+        kid: backend-authn-demo
+        claims:
+          iss: agentgateway-backend-authn-lab
+          sub: backend-authn-demo-client
+          aud: https://httpbun.backend-authn.svc.cluster.local
+        ttl: 60s

@@ -1,0 +1,58 @@
+# Keycloak, `start-dev` mode, same self-contained pattern as the D5 lab
+# (mcp-auth-keycloak). `--features=preview` is required here: RFC 8693
+# "standard token exchange" (the `standard.token.exchange.enabled` client
+# attribute set on `requester-client` by 04-keycloak-setup-job.yaml) is a
+# preview feature as of Keycloak 26.x, confirmed against agentgateway's
+# own worked example
+# (github.com/agentgateway/agentgateway/tree/main/examples/traffic-token-exchange/oauth-rfc8693).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: backend-authn
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.7.1
+          args: ["start-dev", "--features=preview"]
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              value: admin
+            # Same reasoning as D5: without a fixed hostname, the `iss`
+            # claim on issued tokens depends on whatever Host header the
+            # caller used, and jwtAuthentication.providers[].issuer has to
+            # match exactly. Pin it to the in-cluster DNS name.
+            - name: KC_HOSTNAME
+              value: http://keycloak.backend-authn.svc.cluster.local:8080
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /realms/master
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 40
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: backend-authn
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - port: 8080
+      targetPort: 8080
