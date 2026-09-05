@@ -83,3 +83,5 @@ keyless mock backend, so every lab can be run without a real provider key.
   don't.
 - **alerting-signals/** — what to alert on and what to ignore, across
   Kubernetes-resource, control-plane (xDS), and dataplane failure layers.
+- **access-logs/** — the access-log policy that captures what the model
+  actually said, shipped as OTLP logs to Loki.

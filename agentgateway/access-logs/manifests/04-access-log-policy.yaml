@@ -1,0 +1,37 @@
+# Turns on access logging for the whole Gateway and ships every line to
+# the OTel Collector as OTLP logs, which forwards on to Loki. Access
+# logging in agentgateway is an AgentgatewayPolicy, the same resource
+# kind G1/G3 used for tracing, not a Helm value or a Gateway field.
+#
+# attributes.add pulls the model's own request/response text into the log
+# line via the `llm` CEL variable group: llm.prompt (the input),
+# llm.completion (the output), llm.responseModel (which model answered).
+# filter: 'true' logs every request, not just errors, since the whole
+# point of this lab is reading a successful completion back out of Loki.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: access-log-otlp
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+  frontend:
+    accessLog:
+      filter: 'true'
+      attributes:
+        add:
+          - name: llm_model
+            expression: 'llm.responseModel'
+          - name: llm_prompt
+            expression: 'llm.prompt'
+          - name: llm_completion
+            expression: 'llm.completion'
+      otlp:
+        backendRef:
+          name: opentelemetry-collector
+          namespace: tracing
+          port: 4317
+        protocol: GRPC
