@@ -1,0 +1,18 @@
+# Deliberately no backendRefs: a directResponse policy answers every
+# request on this route before it would ever need one. If you deleted the
+# AgentgatewayPolicy in 03-mock-policy.yaml, this route would have nowhere
+# to send a request.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mock-completions
+  namespace: mock-testing
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mock/chat/completions

@@ -1,0 +1,22 @@
+# A namespace and the shared Gateway. No backend of any kind lives here on
+# purpose: the whole point of this lab is that the mocked route never
+# forwards to a real service, let alone a real LLM provider.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mock-testing
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: All

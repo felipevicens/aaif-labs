@@ -1,0 +1,28 @@
+# A conditional directResponse: the client controls which canned response
+# it gets back by sending an X-Mock-Scenario header, no real LLM provider
+# involved at any point. First match wins; the entry with no `condition`
+# is the fallback and must come last.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: mock-completions
+  namespace: mock-testing
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: mock-completions
+  traffic:
+    directResponse:
+      conditional:
+        - condition: request.headers['x-mock-scenario'] == 'ratelimit'
+          policy:
+            status: 429
+            body: '{"error": {"message": "Rate limit exceeded", "type": "rate_limit_error"}}'
+        - condition: request.headers['x-mock-scenario'] == 'error'
+          policy:
+            status: 500
+            body: '{"error": {"message": "Internal server error", "type": "server_error"}}'
+        - policy:
+            status: 200
+            body: '{"id": "mock-cmpl-1", "object": "chat.completion", "choices": [{"index": 0, "message": {"role": "assistant", "content": "This is a mocked response. No provider was called."}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}'

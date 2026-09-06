@@ -96,6 +96,10 @@ keyless mock backend, so every lab can be run without a real provider key.
   failing status code, and a per-try timeout paired with retries against
   a slow backend, all fully deterministic against httpbun's
   fixed-behavior endpoints.
+- **mock-testing/** — mocking an entire AI backend at the gateway with
+  `directResponse`: a route with zero `backendRefs`, answered entirely by
+  a conditional policy picking between a mocked completion, rate limit,
+  and server error by request header.
 
 ### Serie I — migration and CLI tooling
 
