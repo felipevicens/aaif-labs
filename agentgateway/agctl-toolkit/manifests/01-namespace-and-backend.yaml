@@ -1,0 +1,98 @@
+# httpbun mocked as an OpenAI-compatible backend behind a /chat route, the
+# same pattern this series has used since the multi-provider lab. This is
+# the request agctl proxy trace watches/injects against.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agctl-toolkit
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbun
+  namespace: agctl-toolkit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbun
+  template:
+    metadata:
+      labels:
+        app: httpbun
+    spec:
+      containers:
+        - name: httpbun
+          image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTPBUN_BIND
+              value: "0.0.0.0:3090"
+          ports:
+            - containerPort: 3090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbun
+  namespace: agctl-toolkit
+spec:
+  selector:
+    app: httpbun
+  ports:
+    - port: 3090
+      targetPort: 3090
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: httpbun-llm
+  namespace: agctl-toolkit
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4
+      host: httpbun.agctl-toolkit.svc.cluster.local
+      port: 3090
+      path: "/llm/chat/completions"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: chat-route
+  namespace: agctl-toolkit
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /chat
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: httpbun-llm
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

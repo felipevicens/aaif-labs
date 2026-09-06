@@ -1,0 +1,34 @@
+# A second route that points at a Service with no backing pods. Nothing
+# about the route itself is wrong, so it's a good stand-in for the failure
+# agctl proxy trace is actually for: a request that matches a route and
+# a policy correctly, then fails at the one stage a static YAML read can't
+# show you, the live call to the backend.
+apiVersion: v1
+kind: Service
+metadata:
+  name: nowhere
+  namespace: agctl-toolkit
+spec:
+  selector:
+    app: does-not-exist
+  ports:
+    - port: 9999
+      targetPort: 9999
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: broken-route
+  namespace: agctl-toolkit
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /broken
+      backendRefs:
+        - name: nowhere
+          port: 9999

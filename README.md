@@ -85,3 +85,9 @@ keyless mock backend, so every lab can be run without a real provider key.
   Kubernetes-resource, control-plane (xDS), and dataplane failure layers.
 - **access-logs/** — the access-log policy that captures what the model
   actually said, shipped as OTLP logs to Loki.
+
+### Serie I — migration and CLI tooling
+
+- **agctl-toolkit/** — the `agctl proxy trace` and `agctl proxy config`
+  debugging commands: per-request event traces and runtime backend
+  health, no separate observability stack required.
