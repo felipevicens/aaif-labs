@@ -1,0 +1,16 @@
+# A plain Gateway API Gateway is the whole waypoint. Istio's own control
+# plane (istiod) reconciles this GatewayClass and provisions the
+# agentgateway proxy pod directly, no agentgateway Helm chart involved.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: httpbun-waypoint
+  namespace: ambient-demo
+  labels:
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: istio-agentgateway-waypoint
+  listeners:
+  - name: mesh
+    port: 15008
+    protocol: HBONE

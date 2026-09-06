@@ -1,0 +1,25 @@
+# An HTTPRoute attached to the waypoint Gateway, applied to plain
+# mesh-internal traffic between two pods. Istio's ambient docs state
+# that VirtualService/DestinationRule are NOT honored by an agentgateway
+# waypoint, only Gateway API resources like this one configure it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httpbun-mesh-route
+  namespace: ambient-demo
+spec:
+  parentRefs:
+  - name: httpbun-waypoint
+    kind: Gateway
+  hostnames:
+  - httpbun.ambient-demo.svc.cluster.local
+  rules:
+  - filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: X-Via-Waypoint
+          value: agentgateway
+    backendRefs:
+    - name: httpbun
+      port: 80

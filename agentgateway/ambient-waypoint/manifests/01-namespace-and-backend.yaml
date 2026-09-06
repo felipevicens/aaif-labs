@@ -1,0 +1,44 @@
+# Opting a namespace into Istio Ambient Mesh is one label. No sidecar
+# injection annotation, no restart of anything already running.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ambient-demo
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbun
+  namespace: ambient-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: httpbun}
+  template:
+    metadata:
+      labels: {app: httpbun}
+    spec:
+      containers:
+      - name: httpbun
+        image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+        ports:
+        - containerPort: 80
+---
+# The istio.io/use-waypoint label is what actually routes L7 traffic to
+# this Service through the agentgateway waypoint below. Without it,
+# ztunnel still handles mTLS and L4 identity, but no waypoint sees the
+# request.
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbun
+  namespace: ambient-demo
+  labels:
+    istio.io/use-waypoint: httpbun-waypoint
+spec:
+  selector: {app: httpbun}
+  ports:
+  - port: 80
+    targetPort: 80

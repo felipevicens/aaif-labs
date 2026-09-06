@@ -110,3 +110,7 @@ keyless mock backend, so every lab can be run without a real provider key.
 - **agctl-toolkit/** — the `agctl proxy trace` and `agctl proxy config`
   debugging commands: per-request event traces and runtime backend
   health, no separate observability stack required.
+- **ambient-waypoint/** — agentgateway acting as an Istio Ambient Mesh
+  waypoint proxy (Istio 1.31's `istio-agentgateway-waypoint`
+  GatewayClass), provisioned directly by istiod, no agentgateway Helm
+  chart involved.
