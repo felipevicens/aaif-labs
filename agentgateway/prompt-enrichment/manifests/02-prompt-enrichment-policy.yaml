@@ -1,0 +1,23 @@
+# Prompt Enrichment: prepend a system message and append a closing
+# instruction to every request that reaches chat-route, no matter what the
+# calling app sends. This is a sibling field of promptGuard (B1-B4) on the
+# same spec.backend.ai block, not a separate CRD.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: support-agent-prompt
+  namespace: prompt-enrichment
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: chat-route
+  backend:
+    ai:
+      prompt:
+        prepend:
+          - role: system
+            content: "You are the support agent for Aaif Labs. Keep every answer under three sentences."
+        append:
+          - role: system
+            content: "If you are not sure of the answer, say you don't know instead of guessing."
