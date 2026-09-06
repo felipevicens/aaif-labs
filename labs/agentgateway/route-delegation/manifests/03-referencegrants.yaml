@@ -1,0 +1,31 @@
+# Agentgateway 1.5.0 requires a ReferenceGrant in the child's namespace
+# before it will honor a cross-namespace HTTPRoute delegation. Apply these
+# AFTER first proving the parent route fails without them (see
+# 00-cluster-and-install.md) so the gotcha is demonstrated, not hidden.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-parent-delegation
+  namespace: team1
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: agentgateway-system
+  to:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-parent-delegation
+  namespace: team2
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: agentgateway-system
+  to:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute

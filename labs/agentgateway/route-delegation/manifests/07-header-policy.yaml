@@ -1,0 +1,40 @@
+# Policy inheritance through delegation. The parent-level policy stamps
+# x-routed-by on every request that flows through parent-route, including
+# ones later handed off to team1's and team2's children. team2's own policy
+# of the same type (targeting child-team2) overrides that value for
+# anything under /team2 - including requests delegated one level further to
+# the grandchild, since the override cascades down with the delegation.
+# team1 defines no policy of its own, so it just inherits the parent's.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: inject-team-header
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: parent-route
+  traffic:
+    transformation:
+      request:
+        set:
+          - name: "x-routed-by"
+            value: '"platform-parent"'
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: inject-team-header-override
+  namespace: team2
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: child-team2
+  traffic:
+    transformation:
+      request:
+        set:
+          - name: "x-routed-by"
+            value: '"team2-child"'

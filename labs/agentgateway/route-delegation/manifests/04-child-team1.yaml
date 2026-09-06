@@ -1,0 +1,43 @@
+# A leaf child: no delegation of its own, no timeout of its own either, so
+# it inherits the parent's 1s request timeout. parentRefs here is
+# informational only (status reporting) and doesn't restrict who may
+# delegate to this route - the ReferenceGrant in 03-referencegrants.yaml is
+# what actually gates it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: child-team1
+  namespace: team1
+spec:
+  parentRefs:
+    - name: parent-route
+      namespace: agentgateway-system
+      group: gateway.networking.k8s.io
+      kind: HTTPRoute
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /team1/delay
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /delay
+      backendRefs:
+        - name: httpbun
+          port: 3090
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /team1/headers
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /headers
+      backendRefs:
+        - name: httpbun
+          port: 3090

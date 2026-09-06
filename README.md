@@ -86,6 +86,13 @@ keyless mock backend, so every lab can be run without a real provider key.
 - **access-logs/** — the access-log policy that captures what the model
   actually said, shipped as OTLP logs to Loki.
 
+### Serie H — traffic and resilience
+
+- **route-delegation/** — multi-level Gateway API `HTTPRoute` delegation: a
+  platform team's parent route delegating to two application teams' child
+  routes, one delegating a second level to a grandchild, plus native
+  timeout and `AgentgatewayPolicy` inheritance/override across the chain.
+
 ### Serie I — migration and CLI tooling
 
 - **agctl-toolkit/** — the `agctl proxy trace` and `agctl proxy config`

@@ -1,0 +1,28 @@
+# Second delegation hop: a leaf route one level below child-team2. Uses a
+# RegularExpression match instead of PathPrefix - a delegating rule must use
+# PathPrefix, but a leaf rule (this one, a real backendRef) can use
+# RegularExpression or Exact.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: grandchild
+  namespace: team2
+spec:
+  parentRefs:
+    - name: child-team2
+      group: gateway.networking.k8s.io
+      kind: HTTPRoute
+  rules:
+    - matches:
+        - path:
+            type: RegularExpression
+            value: /team2/nested/headers
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /headers
+      backendRefs:
+        - name: httpbun
+          port: 3090

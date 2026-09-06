@@ -1,0 +1,41 @@
+# team2's child has two rules: a leaf rule with its OWN 5s timeout
+# (overriding whatever the parent would have set), and a delegating rule
+# that hands /team2/nested off to a grandchild HTTPRoute in this same
+# namespace - a second level of delegation, no extra ReferenceGrant needed
+# since both routes live in team2.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: child-team2
+  namespace: team2
+spec:
+  parentRefs:
+    - name: parent-route
+      namespace: agentgateway-system
+      group: gateway.networking.k8s.io
+      kind: HTTPRoute
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /team2/delay
+      timeouts:
+        request: 5s
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /delay
+      backendRefs:
+        - name: httpbun
+          port: 3090
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /team2/nested
+      backendRefs:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute
+          name: grandchild
+          namespace: team2
