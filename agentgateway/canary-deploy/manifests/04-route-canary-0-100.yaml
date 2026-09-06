@@ -1,0 +1,31 @@
+# Stage 3: full cutover. v2 becomes the new stable version and v1 stops
+# receiving traffic entirely, still without touching either Deployment.
+# A real rollout would decommission model-v1-stable next; this lab
+# leaves it running so the 0% split itself stays checkable.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: canary-completions
+  namespace: canary
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /get
+      backendRefs:
+        - name: model-v1-stable
+          port: 3090
+          weight: 0
+        - name: model-v2-canary
+          port: 3090
+          weight: 100

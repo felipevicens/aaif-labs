@@ -100,6 +100,10 @@ keyless mock backend, so every lab can be run without a real provider key.
   `directResponse`: a route with zero `backendRefs`, answered entirely by
   a conditional policy picking between a mocked completion, rate limit,
   and server error by request header.
+- **canary-deploy/** — a three-stage rollout (95/5, 50/50, 0/100) using the
+  native Gateway API `weight` field on `HTTPRoute` `backendRefs`, no
+  AI-specific policy at all, verified by tallying each backend's own
+  request log.
 
 ### Serie I — migration and CLI tooling
 

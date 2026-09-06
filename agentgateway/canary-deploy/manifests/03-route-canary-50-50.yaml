@@ -1,0 +1,30 @@
+# Stage 2: promoting the canary. Same HTTPRoute object, same name,
+# applied again with new weights. No restart, no new rollout of either
+# Deployment, just an updated number the gateway picks up immediately.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: canary-completions
+  namespace: canary
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /get
+      backendRefs:
+        - name: model-v1-stable
+          port: 3090
+          weight: 50
+        - name: model-v2-canary
+          port: 3090
+          weight: 50

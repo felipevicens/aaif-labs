@@ -1,0 +1,99 @@
+# The canary namespace, two identical httpbun backends standing in for
+# "model server v1" (stable) and "model server v2" (canary), and the
+# shared Gateway. Both backends are the same image on purpose: a
+# well-behaved canary answers exactly like the version it's replacing, so
+# nothing here distinguishes them except which Service the route sends
+# traffic to.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: canary
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-v1-stable
+  namespace: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: model-v1-stable
+  template:
+    metadata:
+      labels:
+        app: model-v1-stable
+    spec:
+      containers:
+        - name: httpbun
+          image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTPBUN_BIND
+              value: "0.0.0.0:3090"
+          ports:
+            - containerPort: 3090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-v1-stable
+  namespace: canary
+spec:
+  selector:
+    app: model-v1-stable
+  ports:
+    - port: 3090
+      targetPort: 3090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-v2-canary
+  namespace: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: model-v2-canary
+  template:
+    metadata:
+      labels:
+        app: model-v2-canary
+    spec:
+      containers:
+        - name: httpbun
+          image: sharat87/httpbun:e1e68994dd028ed0c8902fc26b3fd8de7f26a066
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTPBUN_BIND
+              value: "0.0.0.0:3090"
+          ports:
+            - containerPort: 3090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-v2-canary
+  namespace: canary
+spec:
+  selector:
+    app: model-v2-canary
+  ports:
+    - port: 3090
+      targetPort: 3090
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - protocol: HTTP
+      port: 8080
+      name: http
+      allowedRoutes:
+        namespaces:
+          from: All
