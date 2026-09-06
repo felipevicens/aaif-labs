@@ -1,0 +1,17 @@
+# Sets a 1s timeout that applies per retry attempt on chaos-pertry, since
+# that route already carries its own retry policy. Confirmed live which
+# behavior actually happens with a single backend pod and no upstream to
+# switch to — see the post's Gotchas section.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: pertry-timeout
+  namespace: resiliency
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: chaos-pertry
+  traffic:
+    timeouts:
+      request: 1s

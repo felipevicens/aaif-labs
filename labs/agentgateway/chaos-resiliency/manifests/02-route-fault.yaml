@@ -1,0 +1,30 @@
+# Scenario 1: fault injection. This route's own request timeout is tight
+# (1s). The AgentgatewayPolicy in 03-fault-injection-policy.yaml injects a
+# 2s delay at the gateway itself, before the request ever reaches httpbun —
+# so the 504 you get back is caused entirely by the injected fault, not by
+# a slow backend.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: chaos-fault
+  namespace: resiliency
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /chaos/fault
+      timeouts:
+        request: 1s
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /get
+      backendRefs:
+        - name: httpbun
+          port: 3090

@@ -1,0 +1,36 @@
+# Scenario 2: native Gateway API retry. httpbun's /status/500 always
+# returns 500 — httpbun has no memory of past requests, so a real retry
+# would keep getting 500 too. The point isn't to see a request "succeed
+# after retrying" against this particular backend; it's to see the proxy
+# actually spend the configured attempts before giving up.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: chaos-retry
+  namespace: resiliency
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /chaos/retry
+      timeouts:
+        request: 5s
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /status/500
+      backendRefs:
+        - name: httpbun
+          port: 3090
+      retry:
+        attempts: 3
+        backoff: 1s
+        codes:
+          - 500
+          - 503

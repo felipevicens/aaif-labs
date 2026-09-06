@@ -1,0 +1,34 @@
+# Scenario 3: per-try timeout paired with retries. httpbun's /delay/5
+# always takes 5s to answer. The AgentgatewayPolicy in
+# 06-pertry-timeout-policy.yaml sets a 1s per-try timeout on this route, so
+# each individual attempt gets cut off well before httpbun would ever
+# respond — this checks what the proxy actually does with a lone backend
+# pod when every attempt times out the same way.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: chaos-pertry
+  namespace: resiliency
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /chaos/pertry
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /delay/5
+      backendRefs:
+        - name: httpbun
+          port: 3090
+      retry:
+        attempts: 3
+        backoff: 200ms
+        codes:
+          - 504

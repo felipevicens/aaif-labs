@@ -92,6 +92,10 @@ keyless mock backend, so every lab can be run without a real provider key.
   platform team's parent route delegating to two application teams' child
   routes, one delegating a second level to a grandchild, plus native
   timeout and `AgentgatewayPolicy` inheritance/override across the chain.
+- **chaos-resiliency/** — gateway-injected fault delay, native retry on a
+  failing status code, and a per-try timeout paired with retries against
+  a slow backend, all fully deterministic against httpbun's
+  fixed-behavior endpoints.
 
 ### Serie I — migration and CLI tooling
 

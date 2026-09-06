@@ -1,0 +1,17 @@
+# Injects a fixed 2s delay on every request that reaches chaos-fault,
+# regardless of how fast httpbun itself would have answered. Longer than
+# the route's own 1s request timeout, so the request always times out
+# before the (never-sent) backend response could matter.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: inject-fault-delay
+  namespace: resiliency
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: chaos-fault
+  traffic:
+    delay:
+      duration: "2s"
