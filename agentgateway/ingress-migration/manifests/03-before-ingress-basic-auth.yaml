@@ -1,0 +1,25 @@
+# Same idea as 02: the "before" ingress-nginx Ingress for the basic-auth
+# scenario, reference-only input for `ingress2gateway print`, not applied
+# to this lab's cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: basic-auth-demo
+  namespace: ingress-migration
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: basic-auth-secret
+    nginx.ingress.kubernetes.io/auth-secret-type: auth-file
+spec:
+  rules:
+    - host: secure.migrate.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: httpbun
+                port:
+                  number: 3090

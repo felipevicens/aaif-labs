@@ -1,0 +1,30 @@
+# The "before": a plain ingress-nginx Ingress with CORS annotations, the
+# kind of object a cluster running the (now-retired) ingress-nginx
+# controller would already have. Not applied to this lab's cluster (there
+# is no ingress-nginx controller here to satisfy it) — it exists purely as
+# the input file for `ingress2gateway print`, exactly as a reader would
+# feed it their own real Ingress objects.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cors-demo
+  namespace: ingress-migration
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.allowed.example"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type"
+    nginx.ingress.kubernetes.io/cors-max-age: "3600"
+spec:
+  rules:
+    - host: cors.migrate.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: httpbun
+                port:
+                  number: 3090

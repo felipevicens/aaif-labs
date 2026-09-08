@@ -112,6 +112,11 @@ keyless mock backend, so every lab can be run without a real provider key.
 
 ### Serie I — migration and CLI tooling
 
+- **ingress-migration/** — the real `ingress2gateway` CLI (`kgateway-dev`
+  fork, `agentgateway` emitter) converting live ingress-nginx annotations
+  into Gateway API: CORS emitted twice (a native `HTTPRoute` filter plus
+  a redundant `AgentgatewayPolicy`), and basic auth needing a Secret
+  keyed `.htaccess`, not ingress-nginx's `auth`.
 - **agctl-toolkit/** — the `agctl proxy trace` and `agctl proxy config`
   debugging commands: per-request event traces and runtime backend
   health, no separate observability stack required.
