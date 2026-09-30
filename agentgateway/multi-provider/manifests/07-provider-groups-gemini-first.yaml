@@ -1,0 +1,30 @@
+# Scenario 6, second half: 06 with the two groups swapped. Re-apply this and
+# the same client request is answered by Gemini instead of OpenAI. Switching
+# provider is a change in this file, not in the app.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    groups:
+      - providers:
+          - name: gemini
+            gemini:
+              model: gemini-3.5-flash-lite
+            policies:
+              auth:
+                secretRef:
+                  name: gemini-credentials
+                location:
+                  header:
+                    name: x-goog-api-key
+      - providers:
+          - name: openai
+            openai:
+              model: gpt-4o-mini
+            policies:
+              auth:
+                secretRef:
+                  name: openai-credentials

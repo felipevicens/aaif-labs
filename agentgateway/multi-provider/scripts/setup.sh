@@ -1,108 +1,104 @@
 #!/usr/bin/env bash
-# End-to-end setup for the multi-provider lab (A1 "One API, Every Provider").
+# End-to-end setup for the multi-provider lab (A1).
 #
-# Always applies the keyless path (01-gateway-backend-route.yaml) so the lab
-# finishes even with no provider credentials at hand (CLAUDE.md: "labs must
-# degrade gracefully"). 02 (OpenAI) and 03 (multi-provider groups, which also
-# needs Gemini) are applied only when their env vars are set — otherwise this
-# prints a clear warning and skips them instead of failing the whole run.
+# The keyless scenarios (01 httpbun, 03 see-the-translation, 08 groups without
+# eviction) are always applied, so the lab finishes with no provider keys at
+# all. 02 (OpenAI), 04 (Gemini), 05 (Anthropic) and 06 (OpenAI + Gemini) are
+# applied only when their env vars are set. They all re-apply the same backend
+# `llm`, so the final state is the last one your keys allow.
 #
-# 04 (Anthropic) is reference-only and never applied here, see its header.
+# Secrets are created from the environment with `kubectl create secret`. No
+# manifest carries a key or a ${PLACEHOLDER}, so nothing here needs envsubst.
 #
 # Usage:
-#   ./setup.sh                  # Scenario 1 always, 2/3 if their keys are set
-#   OPENAI_API_KEY=sk-... GEMINI_API_KEY=... ./setup.sh
+#   ./setup.sh
+#   OPENAI_API_KEY=sk-... GEMINI_API_KEY=... ANTHROPIC_API_KEY=sk-ant-... ./setup.sh
 set -euo pipefail
-
-# envsubst ships with gettext, which isn't guaranteed to be installed (it
-# wasn't in the environment this lab was validated in). Fall back to sed for
-# the two placeholders this lab actually uses, same as 00-cluster-and-install.md
-# already tells a reader without envsubst to do by hand.
-apply_with_env() {
-  local file="$1"
-  if command -v envsubst >/dev/null 2>&1; then
-    envsubst < "$file" | kubectl apply -f -
-  else
-    sed -e "s|\${OPENAI_API_KEY}|${OPENAI_API_KEY:-}|g" \
-        -e "s|\${GEMINI_API_KEY}|${GEMINI_API_KEY:-}|g" \
-        "$file" | kubectl apply -f -
-  fi
-}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-MANIFESTS_DIR="$LAB_DIR/manifests"
+M="$LAB_DIR/manifests"
 
 CLUSTER_NAME="agentgateway-multi-provider"
 GWAPI_VERSION="1.6.0"
 AGW_VERSION="1.5.0"
+NS="agentgateway-system"
 
-if [ "$#" -gt 0 ]; then
-  echo "Unknown argument: $1" >&2
-  echo "Usage: $0" >&2
-  exit 1
-fi
-
-echo "==> Creating kind cluster ($CLUSTER_NAME, node v1.34.0 pinned in kind-config.yaml)"
+echo "==> Creating kind cluster ($CLUSTER_NAME, node image pinned in kind-config.yaml)"
 kind create cluster --name "$CLUSTER_NAME" --config "$LAB_DIR/kind-config.yaml"
 
 echo "==> Installing Gateway API $GWAPI_VERSION (experimental channel)"
 kubectl apply --server-side -f \
   "https://github.com/kubernetes-sigs/gateway-api/releases/download/v${GWAPI_VERSION}/experimental-install.yaml"
 
-echo "==> Installing agentgateway CRDs $AGW_VERSION"
-helm upgrade -i --create-namespace --namespace agentgateway-system \
-  --version "v${AGW_VERSION}" agentgateway-crds \
-  oci://cr.agentgateway.dev/charts/agentgateway-crds
+echo "==> Installing agentgateway $AGW_VERSION (CRDs, then control plane)"
+helm upgrade -i --create-namespace -n "$NS" --version "v${AGW_VERSION}" \
+  agentgateway-crds oci://cr.agentgateway.dev/charts/agentgateway-crds
+helm upgrade -i -n "$NS" --version "v${AGW_VERSION}" \
+  agentgateway oci://cr.agentgateway.dev/charts/agentgateway
 
-echo "==> Installing agentgateway control plane $AGW_VERSION"
-helm upgrade -i -n agentgateway-system agentgateway oci://cr.agentgateway.dev/charts/agentgateway \
-  --version "v${AGW_VERSION}"
-
-echo "==> Waiting for the agentgateway GatewayClass to exist"
-# `kubectl wait` errors out immediately with NotFound if the object doesn't
-# exist yet rather than waiting for it to be created. The controller pod
-# needs a moment to start and register it after `helm upgrade -i` returns,
-# so poll for existence first (confirmed live: without this, the very next
-# `kubectl wait` below can race a freshly created pod and fail the whole
-# script before the GatewayClass object is even there).
-for i in $(seq 1 60); do
+echo "==> Waiting for the agentgateway GatewayClass"
+# kubectl wait fails at once with NotFound if the object does not exist yet,
+# so poll for it first: the controller needs a moment to register it.
+for _ in $(seq 1 60); do
   kubectl get gatewayclass/agentgateway >/dev/null 2>&1 && break
   sleep 2
 done
-
-echo "==> Waiting for the agentgateway GatewayClass to be accepted"
 kubectl wait --for=jsonpath='{.status.conditions[?(@.type=="Accepted")].status}'=True \
   gatewayclass/agentgateway --timeout=120s
 
-echo "==> Scenario 1 (keyless): applying 01-gateway-backend-route.yaml"
-kubectl apply -f "$MANIFESTS_DIR/01-gateway-backend-route.yaml"
-kubectl wait --for=condition=Available deployment/httpbun -n default --timeout=120s
-kubectl wait --for=condition=Programmed gateway/agentgateway-proxy -n agentgateway-system --timeout=120s
+echo "==> Scenario 1 (keyless): gateway, httpbun, backend llm, route /v1/chat/completions"
+kubectl apply -f "$M/01-gateway-httpbun-route.yaml"
+kubectl wait --for=condition=Available deployment/httpbun -n default --timeout=180s
+kubectl wait --for=condition=Programmed gateway/agentgateway-proxy -n "$NS" --timeout=180s
+
+echo "==> Scenario 3 (keyless): echo server + wire-gemini / wire-anthropic"
+kubectl apply -f "$M/03-see-the-translation.yaml"
+kubectl wait --for=condition=Available deployment/echo -n default --timeout=180s
+
+echo "==> Gotcha demo (keyless): groups without eviction on /demo/groups"
+kubectl apply -f "$M/08-groups-without-eviction.yaml"
 
 if [ -n "${OPENAI_API_KEY:-}" ]; then
-  echo "==> Scenario 2 (OpenAI): applying 02-openai-secret-and-backend.yaml"
-  apply_with_env "$MANIFESTS_DIR/02-openai-secret-and-backend.yaml"
+  echo "==> Scenario 2 (OpenAI)"
+  kubectl create secret generic openai-credentials -n "$NS" \
+    --from-literal=Authorization="$OPENAI_API_KEY" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl apply -f "$M/02-openai-backend.yaml"
 else
-  echo "==> Skipping Scenario 2 (OpenAI): OPENAI_API_KEY is not set."
-  echo "    export OPENAI_API_KEY=sk-... and re-run to include it."
+  echo "==> Skipping Scenario 2: OPENAI_API_KEY is not set"
+fi
+
+if [ -n "${GEMINI_API_KEY:-}" ]; then
+  echo "==> Scenario 4 (Gemini)"
+  kubectl create secret generic gemini-credentials -n "$NS" \
+    --from-literal=Authorization="$GEMINI_API_KEY" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl apply -f "$M/04-gemini-backend.yaml"
+else
+  echo "==> Skipping Scenario 4: GEMINI_API_KEY is not set"
+fi
+
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "==> Scenario 5 (Anthropic)"
+  kubectl create secret generic anthropic-credentials -n "$NS" \
+    --from-literal=Authorization="$ANTHROPIC_API_KEY" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl apply -f "$M/05-anthropic-backend.yaml"
+else
+  echo "==> Skipping Scenario 5: ANTHROPIC_API_KEY is not set"
 fi
 
 if [ -n "${OPENAI_API_KEY:-}" ] && [ -n "${GEMINI_API_KEY:-}" ]; then
-  echo "==> Scenario 3 (multi-provider groups): applying 03-multiprovider-priority-groups.yaml"
-  apply_with_env "$MANIFESTS_DIR/03-multiprovider-priority-groups.yaml"
+  echo "==> Scenario 6 (OpenAI + Gemini in one backend, OpenAI first)"
+  kubectl apply -f "$M/06-provider-groups-openai-first.yaml"
 else
-  echo "==> Skipping Scenario 3 (multi-provider groups): needs both OPENAI_API_KEY and GEMINI_API_KEY."
+  echo "==> Skipping Scenario 6: needs both OPENAI_API_KEY and GEMINI_API_KEY"
 fi
-
-echo "==> 04-anthropic-config-unvalidated.yaml is never applied automatically; see its header."
 
 cat <<'EOF'
 
-==> Done. Reach the gateway with:
+==> Done. In another terminal:
   kubectl port-forward -n agentgateway-system svc/agentgateway-proxy 8080:8080
 
-  # keyless (always works):
-  curl -X POST http://localhost:8080/llm/httpbun -H 'Content-Type: application/json' \
-    -d '{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}'
+Then:
+  curl -s http://localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
+    -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Say OK"}]}'
 EOF

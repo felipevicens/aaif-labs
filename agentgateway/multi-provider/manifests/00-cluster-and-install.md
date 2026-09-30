@@ -1,78 +1,81 @@
 # Cluster + install commands
 
-Exact commands used to stand up the environment this post's manifests are
-tested against. Ephemeral `kind` cluster, torn down after testing, same
-pattern as post 1 and post 2 (`virtual-keys`, `observability`) — nothing here
-touches shared infrastructure. This post is self-contained: it does not
-assume either earlier cluster is still around.
+Exact commands used to stand up the environment this post's manifests were
+tested against. Ephemeral `kind` cluster, deleted after testing. This post is
+self-contained: it does not assume any earlier cluster is still around.
 
 ```sh
 kind create cluster --name agentgateway-multi-provider --config ../kind-config.yaml
 
-export GWAPI_VERSION=1.6.0
 kubectl apply --server-side -f \
-  https://github.com/kubernetes-sigs/gateway-api/releases/download/v$GWAPI_VERSION/experimental-install.yaml
+  https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/experimental-install.yaml
 
-helm upgrade -i --create-namespace --namespace agentgateway-system \
-  --version v1.5.0 agentgateway-crds oci://cr.agentgateway.dev/charts/agentgateway-crds
+helm upgrade -i --create-namespace -n agentgateway-system --version v1.5.0 \
+  agentgateway-crds oci://cr.agentgateway.dev/charts/agentgateway-crds
 
-helm upgrade -i -n agentgateway-system agentgateway oci://cr.agentgateway.dev/charts/agentgateway \
-  --version v1.5.0
+helm upgrade -i -n agentgateway-system --version v1.5.0 \
+  agentgateway oci://cr.agentgateway.dev/charts/agentgateway
 
 kubectl get gatewayclass   # expect agentgateway / ACCEPTED=True
 ```
 
-**Note on the experimental Gateway API flag.** Posts 1 and 2 (chart
-`1.4.0-alpha.1`) passed `--set
-controller.extraEnv.KGW_ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES=true`
-explicitly. On chart `1.5.0` that flag was renamed to
-`AGW_ENABLE_EXPERIMENTAL_GATEWAY_API_FEATURES` (prefix *and* word order
-changed) and it now defaults to enabled, so the command above does not pass it
-at all. If you are upgrading a `virtual-keys`/`observability` cluster in
-place instead of starting fresh, drop the old `KGW_...` flag: the newer
-controller silently ignores it rather than erroring, which just means it
-looks set but does nothing.
+No Helm flag is needed for anything in this lab. The first posts of the
+series (chart `1.4.0-alpha.1`) passed
+`controller.extraEnv.KGW_ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES=true`; this
+one passes nothing.
 
-Apply order for the manifests in this folder:
+## Apply order
 
-1. `01-gateway-backend-route.yaml` — Scenario 1. `Gateway`, the `httpbun`
-   `Deployment`/`Service` (keyless OpenAI-compatible mock), an
-   `AgentgatewayBackend` pointed at it, and its `HTTPRoute`. Nothing here
-   needs a provider credential, so it is the path any reader can complete.
-   The `agentgateway-proxy` Service is a `LoadBalancer`; on `kind` it stays
-   `EXTERNAL-IP: <pending>` (no LB provider — expected). Reach it with a
-   port-forward, which every `curl` below assumes:
+1. `01-gateway-httpbun-route.yaml`: Scenario 1, no keys. The `Gateway`,
+   httpbun, the backend `llm` pointing at httpbun, and the `HTTPRoute` on
+   `/v1/chat/completions`. After this, start the port-forward and leave it
+   running in its own terminal:
 
    ```sh
-   # leave running in its own terminal
+   kubectl wait --for=condition=Programmed gateway/agentgateway-proxy \
+     -n agentgateway-system --timeout=180s
    kubectl port-forward -n agentgateway-system svc/agentgateway-proxy 8080:8080
    ```
-2. `02-openai-secret-and-backend.yaml` — Scenario 2 (real OpenAI, single
-   provider). Needs `OPENAI_API_KEY`:
+
+2. `02-openai-backend.yaml`: Scenario 2. Create the Secret first:
 
    ```sh
-   export OPENAI_API_KEY="sk-..."
-   envsubst < 02-openai-secret-and-backend.yaml | kubectl apply -f -
+   kubectl create secret generic openai-credentials -n agentgateway-system \
+     --from-literal=Authorization="$OPENAI_API_KEY"
+   kubectl apply -f 02-openai-backend.yaml
    ```
 
-   No `envsubst`? Pipe the same YAML through a `cat <<EOF | kubectl apply -f -`
-   heredoc instead; the shell expands `$OPENAI_API_KEY` with no extra tools.
-3. `03-multiprovider-priority-groups.yaml` — Scenario 3, the core of the post.
-   One `AgentgatewayBackend` combining httpbun, OpenAI and Gemini as
-   `spec.ai.groups` (priority groups). Reuses the `openai-credentials` Secret
-   from step 2 and adds a new one for Gemini. Needs both keys:
+3. `03-see-the-translation.yaml`: Scenario 3, no keys. Echo server plus
+   `wire-gemini` / `wire-anthropic` backends on `/wire/gemini` and
+   `/wire/anthropic`. Read what they received with
+   `kubectl logs deploy/echo -n default`.
+
+4. `04-gemini-backend.yaml`: Scenario 4. Create the Secret with the bare key:
 
    ```sh
-   export OPENAI_API_KEY="sk-..." GEMINI_API_KEY="..."
-   envsubst < 03-multiprovider-priority-groups.yaml | kubectl apply -f -
+   kubectl create secret generic gemini-credentials -n agentgateway-system \
+     --from-literal=Authorization="$GEMINI_API_KEY"
+   kubectl apply -f 04-gemini-backend.yaml
    ```
-4. `04-anthropic-config-unvalidated.yaml` is **not applied** by
-   `scripts/setup.sh` and was not run against a live cluster. It is a
-   reference config only — see its header comment before using it for real.
 
-This post stays on the stable `AgentgatewayBackend` + `HTTPRoute` API
-throughout. The experimental `AgentgatewayModel` API (`virtualModel.failover`
-/ `.conditional`) is out of scope here; A2 and A3 build it out next.
+5. `05-anthropic-backend.yaml`: Scenario 5. Create the Secret with the bare
+   key. No `location` block is needed, the gateway moves it to `x-api-key`:
+
+   ```sh
+   kubectl create secret generic anthropic-credentials -n agentgateway-system \
+     --from-literal=Authorization="$ANTHROPIC_API_KEY"
+   kubectl apply -f 05-anthropic-backend.yaml
+   ```
+
+6. `06-provider-groups-openai-first.yaml`, then
+   `07-provider-groups-gemini-first.yaml`: Scenario 6. Needs the OpenAI and
+   Gemini Secrets.
+
+7. `08-groups-without-eviction.yaml`: the Gotcha demo, no keys, on
+   `/demo/groups`.
+
+Files 02, 04, 05, 06 and 07 all re-apply the same backend `llm`, so each one
+replaces the previous one. The route and the client never change.
 
 ## Cleanup
 

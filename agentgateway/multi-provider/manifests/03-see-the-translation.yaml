@@ -1,0 +1,124 @@
+# Scenario 3: look at the translation with your own eyes, no keys needed.
+#
+# `echo` is a tiny server that logs every request it receives (method, path,
+# headers, body) and answers with a copy of it. Two backends point a `gemini`
+# and an `anthropic` provider at it, through a host override, instead of at
+# Google or Anthropic. Send one OpenAI-shaped request to each and read
+# `kubectl logs deploy/echo`: that is exactly what the real provider would get.
+#
+# Confirmed live on 1.5.0:
+# - gemini gets Gemini's native generateContent body (contents/parts,
+#   systemInstruction, generationConfig.maxOutputTokens), not OpenAI's shape.
+# - anthropic gets the Messages API body (a separate `system` field, content
+#   as blocks, required max_tokens) plus `x-api-key` and `anthropic-version`
+#   headers. The key moves from Authorization to x-api-key by itself.
+#
+# The client will get an error back (502, or an empty 200 for gemini), because
+# echo does not answer like a real provider. That is expected. The point of
+# this scenario is the request, not the response.
+#
+# With a host override the upstream path is the client's own path. Against
+# the real hosts the providers set their own path (for Gemini,
+# /v1beta/models/<model>:generateContent, per the 1.5.0 source).
+#
+# The inline `key` values are fake on purpose. They only exist so you can see
+# where each provider puts the credential.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo
+  template:
+    metadata:
+      labels:
+        app: echo
+    spec:
+      containers:
+        - name: echo
+          image: mendhak/http-https-echo:37
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: default
+spec:
+  selector:
+    app: echo
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: wire-gemini
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      gemini:
+        model: gemini-3.5-flash-lite
+      host: echo.default.svc.cluster.local
+      port: 8080
+  policies:
+    auth:
+      key: fake-gemini-key
+      # Same auth location as the real Gemini backend in 04. See the Gotcha
+      # about keys that do not start with "AIza" for why it is set.
+      location:
+        header:
+          name: x-goog-api-key
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: wire-anthropic
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: claude-haiku-4-5
+      host: echo.default.svc.cluster.local
+      port: 8080
+  policies:
+    auth:
+      key: fake-anthropic-key
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wire
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /wire/gemini
+      backendRefs:
+        - name: wire-gemini
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /wire/anthropic
+      backendRefs:
+        - name: wire-anthropic
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
