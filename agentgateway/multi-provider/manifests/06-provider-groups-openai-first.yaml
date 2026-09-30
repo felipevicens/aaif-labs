@@ -1,0 +1,42 @@
+# Scenario 6: two real providers inside the same backend `llm`, through
+# spec.ai.groups. Groups are evaluated in priority order, so OpenAI (group 0)
+# answers every request. 07 is the same file with the two groups swapped:
+# re-applying it moves all traffic to Gemini with no change on the client.
+#
+# Needs both Secrets from 02 and 04.
+#
+# What this is NOT: a failover chain. Without policies.health.eviction on the
+# group-0 provider, a failing OpenAI keeps getting every request and Gemini
+# is never tried. 08 reproduces that without any keys. Failover is a later
+# post (A2).
+#
+# NamedLLMProvider entries are flat: name, policies and the provider type
+# (openai, gemini, ...) sit directly on the list entry, with no `provider:`
+# wrapper like the single-provider shape in 02 and 04.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    groups:
+      - providers:
+          - name: openai
+            openai:
+              model: gpt-4o-mini
+            policies:
+              auth:
+                secretRef:
+                  name: openai-credentials
+      - providers:
+          - name: gemini
+            gemini:
+              model: gemini-3.5-flash-lite
+            policies:
+              auth:
+                secretRef:
+                  name: gemini-credentials
+                location:
+                  header:
+                    name: x-goog-api-key

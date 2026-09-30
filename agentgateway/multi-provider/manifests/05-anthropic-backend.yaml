@@ -1,0 +1,31 @@
+# Scenario 5: the same backend name, `llm`, now pointing at Anthropic. Same
+# route, same client request as Scenarios 1, 2 and 4. The gateway sends the
+# Messages API body you saw in 03, then turns Claude's answer back into
+# OpenAI's shape.
+#
+# Create the Secret first. Store the bare key, no "Bearer " prefix:
+#
+#   kubectl create secret generic anthropic-credentials -n agentgateway-system \
+#     --from-literal=Authorization="$ANTHROPIC_API_KEY"
+#
+# No `location` block, unlike Gemini in 04: for an `anthropic` provider the
+# gateway moves the key from Authorization to Anthropic's own `x-api-key`
+# header by itself, and adds the required `anthropic-version` header (see 03).
+#
+# Confirmed live on 1.5.0 with claude-haiku-4-5: 200 in OpenAI's response
+# shape, with curl, the OpenAI Python SDK and stream=true. Anthropic requires
+# max_tokens; when the client sends none, the gateway sends 4096.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: claude-haiku-4-5
+  policies:
+    auth:
+      secretRef:
+        name: anthropic-credentials

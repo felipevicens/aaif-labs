@@ -1,0 +1,34 @@
+# Scenario 4: the same backend name, `llm`, now pointing at Gemini. Same
+# route, same client request as Scenarios 1 and 2. This time the gateway has
+# to translate, because Gemini does not speak OpenAI's shape (see 03).
+#
+# Create the Secret first. Store the bare key, no "Bearer " prefix:
+#
+#   kubectl create secret generic gemini-credentials -n agentgateway-system \
+#     --from-literal=Authorization="$GEMINI_API_KEY"
+#
+# Why `location.header: x-goog-api-key` is set explicitly: without it, 1.5.0
+# only moves the key to `x-goog-api-key` when the key starts with "AIza"
+# (API_KEY_PREFIX in crates/llm/src/gemini.rs). Any other key stays in
+# `Authorization: Bearer`, which Google's native endpoint reads as an OAuth
+# token. Confirmed live with a Google AI Studio key that starts with "AQ.":
+# default auth returns 401 UNAUTHENTICATED, this config returns 200.
+# x-goog-api-key is Google's own header for API keys, so setting it is safe
+# for "AIza" keys too (not live-tested here, no "AIza" key was available).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      gemini:
+        model: gemini-3.5-flash-lite
+  policies:
+    auth:
+      secretRef:
+        name: gemini-credentials
+      location:
+        header:
+          name: x-goog-api-key

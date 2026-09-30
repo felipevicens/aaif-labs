@@ -1,0 +1,51 @@
+# Gotcha demo, no keys needed: priority order is not failover.
+#
+# Group 0 is httpbun's /status/500 endpoint, which fails every time. Group 1
+# is the healthy httpbun mock. It looks like a fallback chain, but with no
+# policies.health.eviction on group 0 nothing ever marks it unhealthy, so
+# every request goes to group 0 and returns 500. Confirmed live on 1.5.0:
+# 5 requests in a row, 5 x HTTP 500, group 1 never used.
+#
+# Own backend and own path (/demo/groups) so it does not touch `llm`.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: groups-demo
+  namespace: agentgateway-system
+spec:
+  ai:
+    groups:
+      - providers:
+          - name: always-500
+            openai:
+              model: gpt-4
+            host: httpbun.default.svc.cluster.local
+            port: 3090
+            path: /status/500
+      - providers:
+          - name: healthy-mock
+            openai:
+              model: gpt-4
+            host: httpbun.default.svc.cluster.local
+            port: 3090
+            path: /llm/chat/completions
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: groups-demo
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /demo/groups
+      backendRefs:
+        - name: groups-demo
+          namespace: agentgateway-system
+          group: agentgateway.dev
+          kind: AgentgatewayBackend

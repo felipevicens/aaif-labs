@@ -1,0 +1,32 @@
+# Scenario 2: the same backend name, `llm`, now pointing at OpenAI. The route
+# from 01 is untouched, so the exact same client request now reaches a real
+# model.
+#
+# Create the Secret first, from your environment. This file carries only a
+# secretRef, never a key, so it is safe to apply straight from GitHub:
+#
+#   kubectl create secret generic openai-credentials -n agentgateway-system \
+#     --from-literal=Authorization="$OPENAI_API_KEY"
+#
+# secretRef reads the `Authorization` key of the Secret by default. A bare
+# key works: the gateway writes it upstream as `Authorization: Bearer <key>`.
+#
+# No host/port/path: `openai` is a native provider, the gateway already knows
+# api.openai.com and the /v1/chat/completions path.
+#
+# `policies` is a SIBLING of `ai`. Nesting it inside `ai` is rejected by the
+# API server: `strict decoding error: unknown field "spec.ai.policies"`.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4o-mini
+  policies:
+    auth:
+      secretRef:
+        name: openai-credentials
