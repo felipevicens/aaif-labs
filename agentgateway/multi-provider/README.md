@@ -30,6 +30,8 @@ manifests/
 scripts/
   setup.sh                               # stands everything up
   teardown.sh                            # kind delete cluster
+  app.py                                 # the client app: OpenAI SDK pointed at the gateway (./app.py)
+  app_stream.py                          # the same app with stream=True (./app_stream.py)
 ```
 
 No manifest contains a key or a `${PLACEHOLDER}`. Provider keys go in
