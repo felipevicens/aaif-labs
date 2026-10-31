@@ -27,7 +27,7 @@ post shows the real output of those runs.
   Gemini and Anthropic, then to priority groups, while the client (`curl` or
   a small OpenAI SDK app) never changes. Manifests and runnable scripts.
   Tested against agentgateway `1.5.0`.
-  Post: *One API, Any Provider: Switching LLMs Without Changing Your App*
+  Post: [One API, Any Provider: Switching LLMs Without Changing Your App](https://medium.com/@fjvicens/one-api-any-provider-switching-llms-without-changing-your-app-44528b1271ef)
 
 ### OpenSandbox
 
